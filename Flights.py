@@ -223,7 +223,10 @@ class Flights:
         # getting filenames for this flight
         self.filenames = []
         for i in range(len(self.runtable)):
-            self.filenames.append([filename for filename in os.listdir('./header/') if re.search(self.runtable.station_string.iloc[i], filename) and re.search(self.runtable.run_string.iloc[i], filename)][0])
+            try:
+                self.filenames.append([filename for filename in os.listdir('./header/') if re.search(self.runtable.station_string.iloc[i], filename) and re.search(self.runtable.run_string.iloc[i], filename)][0])
+            except IndexError:
+                print(f'No file with run {self.runtable.run.iloc[i]} and station {self.runtable.station.iloc[i]}')
         # read all header.root files in one DataFrame
         self.header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
         for filename in self.filenames:
@@ -259,7 +262,7 @@ class Flights:
                 self.files_exist = False
         
         if not self.files_exist:
-            self.cmd = (f'''rnogcopy time "{str(self.start_time_plot).replace(' ', 'T')}" "{str(self.stop_time_plot).replace(' ', 'T')}" --filename=headers.root''')
+            self.cmd = (f'''rnogcopy time "{str(datetime.strftime(self.start_time_plot, '%Y-%m-%dT%H:%M:%S'))}" "{str(datetime.strftime(self.stop_time_plot, '%Y-%m-%dT%H:%M:%S'))}" --filename=headers.root''')
 
             # "> /dev/null 2>&1" to suppress output 
             os.system("cd header && " + self.cmd + "> /dev/null 2>&1" + " && cd ..")
