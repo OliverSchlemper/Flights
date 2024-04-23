@@ -340,9 +340,9 @@ class FlightTracker:
         #------------------------------------------------------------------------------------------------------
         # stations
         for i in range(len(self.stations)):
-            self.ax[0, 0].scatter(self.stations.longitude[i], self.stations.latitude[i], marker = 'x', label = self.stations['Station Name'][i])
+            self.ax[0, 0].scatter(self.stations.longitude[i], self.stations.latitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 1)
 
-        sc = self.ax[0, 0].scatter(f.longitude, f.latitude, marker = '.', c = times, cmap = 'viridis')
+        sc = self.ax[0, 0].scatter(f.longitude, f.latitude, marker = '.', c = times, cmap = 'viridis', s = 1)
         cbar = self.fig.colorbar(sc, ax=self.ax[0, 0])
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(tick_times)
@@ -355,17 +355,17 @@ class FlightTracker:
         self.n_bins = np.arange(start_time_plot.timestamp(), stop_time_plot.timestamp(), 10)
         n_bins = self.n_bins
 
-        self.ax[0, 1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0', label = 'lt triggers', histtype = 'step')
-        self.ax[0, 1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1', label = 'radiant triggers', histtype = 'step')
+        self.ax[0, 1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 1)
+        self.ax[0, 1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 1)
 
 
         self.ax_01_twin = self.ax[0, 1].twinx()
-        self.ax_01_twin.plot(times, r, '.', markersize = 3, label = 'd [km]', color = 'C4')
+        self.ax_01_twin.plot(times, r, '.', markersize = 1, label = 'd [km]', color = 'C4')
 
         x = np.linspace(start_time_plot.timestamp(), stop_time_plot.timestamp(), 100)
         #self.ax_01_twin.plot(x[1:-1], FlightTracker.part_lin(x[1:-1], times, r), '-')
         #ax_01_twin.plot(times, f.altitude/1000, 'x', color = 'C5')
-        self.ax_01_twin.plot(times, f.z, '.', markersize = 3, label = 'altitude [km]', color = 'C6')
+        self.ax_01_twin.plot(times, f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
         #ax_01_twin.plot(times, np.sqrt(f.x**2 + f.y**2 + f.z**2), 'x', color = 'C7')
 
         self.ax[0, 1].set_title('Sum all stations')
@@ -404,10 +404,10 @@ class FlightTracker:
                         axes.set_ylabel('# triggers / 10s')
                     
                     temp_f = FlightTracker.append_enu(f, self.stations[self.stations['Station Nr.'] == nr]['longitude'].to_numpy()[0], self.stations[self.stations['Station Nr.'] == nr]['latitude'].to_numpy()[0])
-                    twinx.plot(times, np.sqrt(temp_f.r2), '.', markersize = 3, color = 'C4')
-                    twinx.plot(times, f.z, '.', markersize = 3, label = 'altitude [km]', color = 'C6')
-                    axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['radiant_triggers'] == True].trigger_time, bins = n_bins, histtype = 'step', color = 'C1')
-                    axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['lt_triggers'] == True].trigger_time, bins = n_bins, histtype = 'step', color = 'C0')
+                    twinx.plot(times, np.sqrt(temp_f.r2), '.', markersize = 1, color = 'C4')
+                    twinx.plot(times, f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
+                    axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['radiant_triggers'] == True].trigger_time, bins = n_bins,  histtype = 'step', color = 'C1')
+                    axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['lt_triggers'] == True].trigger_time, bins = n_bins,  histtype = 'step', color = 'C0')
                     #ax[i, j].legend()
                 counter += 1
 
@@ -435,8 +435,8 @@ class FlightTracker:
 
         self.ax2_0_twin = self.ax2[0].twinx()
 
-        self.ax2[0].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = self.n_bins, color = 'C0', label = 'lt triggers', histtype = 'step')
-        self.ax2[0].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = self.n_bins, color = 'C1', label = 'radiant triggers', histtype = 'step')
+        self.ax2[0].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = self.n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step')
+        self.ax2[0].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = self.n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step')
 
 
         self.ax2[0].set_xticks(ticks)
@@ -445,15 +445,15 @@ class FlightTracker:
         self.ax2[0].set_title('d [km] over time')
         self.ax2_0_twin.set_xlabel('time')
         self.ax2_0_twin.set_ylabel('d [km]')
-        self.ax2_0_twin.plot(times, r, '.', label = 'd [km]', color = 'C4')
-        self.ax2_0_twin.plot(times, f.z, '.', markersize = 3, label = 'altitude [km]', color = 'C6')
-        self.ax2_0_twin.plot(x, FlightTracker.part_lin(x, times, r), label = 'lin fit', color = 'C5')
+        self.ax2_0_twin.plot(times, r, '.', markersize = 1, label = 'd [km]', color = 'C4')
+        self.ax2_0_twin.plot(times, f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
+        self.ax2_0_twin.plot(x, FlightTracker.part_lin(x, times, r), '--', label = 'lin fit', color = 'C5', markersize = 1)
         self.ax2_0_twin.legend()
 
 
         self.ax2[1].set_xlabel('d [km]')
         self.ax2[1].set_ylabel('# triggers / 5 km')
-        self.ax2[1].hist(FlightTracker.part_lin(self.header_df[(times.min() <= self.header_df.trigger_time) & (self.header_df.trigger_time <= times.max())].trigger_time, times, r), bins = 30)
+        self.ax2[1].hist(FlightTracker.part_lin(self.header_df[(times.min() <= self.header_df.trigger_time) & (self.header_df.trigger_time <= times.max())].trigger_time, times, r),  histtype = 'step', linewidth= 1, bins = 30)
     #-------------------------------------------------------------------------------------------------------------------
     def storage():
            # Check if flight data is available for time and output table
