@@ -181,6 +181,7 @@ class FlightTracker:
             table_distinct = pd.read_sql_query(f"Select * From {tablename_distinct} where date >= '{datetime.strftime(start_time, '%Y-%m-%d')}' and date < '{datetime.strftime(stop_time, '%Y-%m-%d')}' order by date", con) 
         con.close()
         return table, table_distinct
+
     #-------------------------------------------------------------------------------------------------------------------
     def get_flight_data(start_time, stop_time):
         # get and unzip files
@@ -203,6 +204,34 @@ class FlightTracker:
         # process files to one big db file
         FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), tablename = 'flights')
 
+    #-------------------------------------------------------------------------------------------------------------------
+    def set_flight_index(self, i):
+        index = i
+        self.t = self.flights_distinct
+
+        # variables
+        self.flightnumber = self.t['flightnumber'].iloc[index]
+        self.date = self.t.date.iloc[index]
+
+        self.start_time_plot = self.t.mintime.iloc[index][:19] # [:19] to throw away potential microseconds
+        self.stop_time_plot = self.t.maxtime.iloc[index][:19] # [:19] to throw away potential microseconds
+
+        self.start_time_plot = FlightTracker.utc.localize(datetime.strptime(self.start_time_plot, FlightTracker.fmt))
+        self.stop_time_plot = FlightTracker.utc.localize(datetime.strptime(self.stop_time_plot, FlightTracker.fmt))
+
+        self.header_df = FlightTracker.get_runtable(self.start_time_plot, self.stop_time_plot)
+        
+        self.f = self.flights.query(f"readtime_utc >= '{datetime.strftime(self.start_time_plot, FlightTracker.fmt)}' & readtime_utc <= '{datetime.strftime(self.stop_time_plot, FlightTracker.fmt)}' & flightnumber == '{self.flightnumber}' ").copy()
+        #f = flights_60.query(f"readtime >= '{start_timestamp}' & readtime <= '{stop_timestamp}'").copy()
+        self.times = pd.to_datetime(self.f.readtime_utc, format='ISO8601').astype('int64') / 10**9
+        self.r = np.sqrt(self.f.r2)
+
+
+        print('''"'''  + self.start_time_plot.strftime("%Y-%m-%dT%H:%M:%S") + '''"''', '''"''' + self.stop_time_plot.strftime("%Y-%m-%dT%H:%M:%S") +  '''"''' + f' duration: {self.stop_time_plot - self.start_time_plot} [s]')
+        print(self.flightnumber)
+
+
+    
     #-------------------------------------------------------------------------------------------------------------------
     def get_runtable(start_time, stop_time):
         # getting runtable information and downloading header files
@@ -287,40 +316,14 @@ class FlightTracker:
 
     #-------------------------------------------------------------------------------------------------------------------
     def plot_flight(self, i):
-        index = i
-        t = self.flights_distinct
-
-        # variables
-        self.flightnumber = t['flightnumber'].iloc[index]
-        flightnumber = self.flightnumber
-        date = t.date.iloc[index]
-
-        start_time_plot = t.mintime.iloc[index][:19] # [:19] to throw away potential microseconds
-        stop_time_plot = t.maxtime.iloc[index][:19] # [:19] to throw away potential microseconds
-
-        start_time_plot = FlightTracker.utc.localize(datetime.strptime(start_time_plot, FlightTracker.fmt))
-        stop_time_plot = FlightTracker.utc.localize(datetime.strptime(stop_time_plot, FlightTracker.fmt))
-
-        self.header_df = FlightTracker.get_runtable(start_time_plot, stop_time_plot)
-
-        #------------------------------------------------------------------------------------------------------
-        f = self.flights.query(f"readtime_utc >= '{datetime.strftime(self.start_time, FlightTracker.fmt)}' & readtime_utc <= '{datetime.strftime(self.stop_time, FlightTracker.fmt)}' & flightnumber == '{flightnumber}' ").copy()
-        #f = flights_60.query(f"readtime >= '{start_timestamp}' & readtime <= '{stop_timestamp}'").copy()
-        self.times = pd.to_datetime(f.readtime_utc, format='ISO8601').astype('int64') / 10**9
-        self.r = np.sqrt(f.r2)
-
-        times = self.times
-        r = self.r
-
-        print('''"''' ,start_time_plot, '''"''', '''"''' ,stop_time_plot, '''"''' + f' duration: {stop_time_plot - start_time_plot} [s]')
-        print(flightnumber)
-
+        
+        self.set_flight_index(i)
 
         # plot data
         plt.rcParams.update({'font.size': 5})
         self.fig, self.ax = plt.subplots(3,3, figsize=(8.27, 11.69), dpi=100)
         self.fig.subplots_adjust(hspace=0.3, wspace=0.4)
-        self.fig.suptitle(flightnumber + ', ' + date + ''', "''' + str(start_time_plot) + '''", "''' + str(stop_time_plot) + '''"''')
+        self.fig.suptitle(self.flightnumber + ', ' + self.date + ''', "''' + str(self.start_time_plot) + '''", "''' + str(self.stop_time_plot) + '''"''')
 
         #------------------------------------------------------------------------------------------------------
         #------------------------------------------------------------------------------------------------------
@@ -333,7 +336,7 @@ class FlightTracker:
 
         #------------------------------------------------------------------------------------------------------
         # set ticks for time colorbar
-        ticks = np.linspace(start_time_plot.timestamp(), stop_time_plot.timestamp(), 8)
+        ticks = np.linspace(self.start_time_plot.timestamp(), self.stop_time_plot.timestamp(), 8)
         tick_times = pd.to_datetime(ticks, unit = 's').strftime('%H:%M:%S')
 
 
@@ -342,7 +345,7 @@ class FlightTracker:
         for i in range(len(self.stations)):
             self.ax[0, 0].scatter(self.stations.longitude[i], self.stations.latitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 1)
 
-        sc = self.ax[0, 0].scatter(f.longitude, f.latitude, marker = '.', c = times, cmap = 'viridis', s = 1)
+        sc = self.ax[0, 0].scatter(self.f.longitude, self.f.latitude, marker = '.', c = self.times, cmap = 'viridis', s = 1)
         cbar = self.fig.colorbar(sc, ax=self.ax[0, 0])
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(tick_times)
@@ -352,7 +355,7 @@ class FlightTracker:
         #------------------------------------------------------------------------------------------------------
         #------------------------------------------------------------------------------------------------------
         # ax[1]
-        self.n_bins = np.arange(start_time_plot.timestamp(), stop_time_plot.timestamp(), 10)
+        self.n_bins = np.arange(self.start_time_plot.timestamp(), self.stop_time_plot.timestamp(), 10)
         n_bins = self.n_bins
 
         self.ax[0, 1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 1)
@@ -360,12 +363,12 @@ class FlightTracker:
 
 
         self.ax_01_twin = self.ax[0, 1].twinx()
-        self.ax_01_twin.plot(times, r, '.', markersize = 1, label = 'd [km]', color = 'C4')
+        self.ax_01_twin.plot(self.times, self.r, '.', markersize = 1, label = 'd [km]', color = 'C4')
 
-        x = np.linspace(start_time_plot.timestamp(), stop_time_plot.timestamp(), 100)
+        x = np.linspace(self.start_time_plot.timestamp(), self.stop_time_plot.timestamp(), 100)
         #self.ax_01_twin.plot(x[1:-1], FlightTracker.part_lin(x[1:-1], times, r), '-')
         #ax_01_twin.plot(times, f.altitude/1000, 'x', color = 'C5')
-        self.ax_01_twin.plot(times, f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
+        self.ax_01_twin.plot(self.times, self.f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
         #ax_01_twin.plot(times, np.sqrt(f.x**2 + f.y**2 + f.z**2), 'x', color = 'C7')
 
         self.ax[0, 1].set_title('Sum all stations')
@@ -403,9 +406,9 @@ class FlightTracker:
                     if j == 0:
                         axes.set_ylabel('# triggers / 10s')
                     
-                    temp_f = FlightTracker.append_enu(f, self.stations[self.stations['Station Nr.'] == nr]['longitude'].to_numpy()[0], self.stations[self.stations['Station Nr.'] == nr]['latitude'].to_numpy()[0])
-                    twinx.plot(times, np.sqrt(temp_f.r2), '.', markersize = 1, color = 'C4')
-                    twinx.plot(times, f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
+                    temp_f = FlightTracker.append_enu(self.f, self.stations[self.stations['Station Nr.'] == nr]['longitude'].to_numpy()[0], self.stations[self.stations['Station Nr.'] == nr]['latitude'].to_numpy()[0])
+                    twinx.plot(self.times, np.sqrt(temp_f.r2), '.', markersize = 1, color = 'C4')
+                    twinx.plot(self.times, self.f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
                     axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['radiant_triggers'] == True].trigger_time, bins = n_bins,  histtype = 'step', color = 'C1')
                     axes.hist(self.header_df[(self.header_df['station_number'] == nr) & self.header_df['lt_triggers'] == True].trigger_time, bins = n_bins,  histtype = 'step', color = 'C0')
                     #ax[i, j].legend()
