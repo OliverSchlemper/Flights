@@ -116,7 +116,7 @@ class FlightTracker:
                 
                 # Merge  start/end times to distinct flights
                 flights_distinct = flights_distinct.merge(flight_start_end_times, on=['flightnumber', 'date'], how='left')
-                flights_distinct['minr2'] = np.sqrt(flights_distinct.minr2)
+                flights_distinct['min_r'] = np.sqrt(flights_distinct.minr2)
 
         
         # Write the updated DataFrame back to the database
@@ -417,7 +417,10 @@ class FlightTracker:
 
     #-------------------------------------------------------------------------------------------------------------------
     def show_flights(self):
-        print(self.flights_distinct[['flightnumber', 'date', 'filename', 'minr2']])
+        print(self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']])
+
+    #-------------------------------------------------------------------------------------------------------------------
+
 
     #-------------------------------------------------------------------------------------------------------------------
     def plot_trigger_rate_over_d(self):
