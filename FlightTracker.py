@@ -14,6 +14,8 @@ from pandasql import sqldf
 from rnog_data.runtable import RunTable
 from datetime import datetime, timedelta
 
+from Flight import Flight
+
 class FlightTracker:
 
     # functions
@@ -38,6 +40,10 @@ class FlightTracker:
         
         return dataframe
 
+
+    #-------------------------------------------------------------------------------------------------------------------
+    def append_l1():
+        pass
     #-------------------------------------------------------------------------------------------------------------------
     def init_stations():
         s = [['Big House', -38.45, 72.58, 0]
@@ -71,11 +77,10 @@ class FlightTracker:
         and writes the processed data back to the database.
         """
 
-        flights = flights_distinct = pd.DataFrame()
-        
+        flights = flights_distinct = df = pd.DataFrame()
+
         # List SQLite database files in the specified directory
-        files = [filename for filename in os.listdir(filedir) if '.db' in filename]
-        
+        files = [filename for filename in os.listdir(filedir) if '.db' in filename] 
         # Iterate through each database file
         for filename in files:
             # Establish connection to the database file
@@ -111,13 +116,11 @@ class FlightTracker:
             flights_distinct = sqldf("SELECT distinct flightnumber, date, filename from flights")
         
             if append_min_max_time == True:
-                flight_start_end_times = sqldf( "SELECT min(readtime_utc) as mintime, max(readtime_utc) as maxtime, min(r2) as minr2, date, flightnumber from flights "
+                flight_start_end_times = sqldf( "SELECT min(readtime_utc) as mintime, max(readtime_utc) as maxtime, round(sqrt(min(r2)), 1) as min_r, date, flightnumber from flights "
                                                 "Group By date, flightnumber, filename")
                 
                 # Merge  start/end times to distinct flights
                 flights_distinct = flights_distinct.merge(flight_start_end_times, on=['flightnumber', 'date'], how='left')
-                flights_distinct['min_r'] = np.sqrt(flights_distinct.minr2)
-
         
         # Write the updated DataFrame back to the database
         tablename_distinct = tablename + '_distinct'
@@ -133,9 +136,9 @@ class FlightTracker:
         return 0
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_rnog_data(  filename,
-                        path_data='./data/',
-                        server_url='https://rno-g.uchicago.edu/data/flight-tracker/'):
+    def download_flight_tracker_db_files(filename,
+                                        path_data='./data/',
+                                        server_url='https://rno-g.uchicago.edu/data/flight-tracker/'):
         """
         Download RNO-G data file(s) from the specified server URL.
 
@@ -166,7 +169,7 @@ class FlightTracker:
         return 0
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_flights(start_time,
+    def get_flights_and_flights_distinct(start_time,
                     stop_time,
                     tablename='flights',
                     db_file='flights'):
@@ -183,19 +186,22 @@ class FlightTracker:
         return table, table_distinct
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_flight_data(start_time, stop_time):
+    def download_and_process_db_files(start_time, stop_time):
         # get and unzip files
         current_time = start_time
         file_dates = sorted([s.split('-')[0] for s in os.listdir('./data/')])
+
+        filenames_flight_tracker_db = []
 
         while current_time < stop_time:
             # increment time
             current_time += timedelta(days = 1)
             filename = str(datetime.strftime(current_time, '%Y.%m.%d')) + '-*.db.gz' # data for day x is in file for day x + 1, therefore use incremented current_time for filename
-            
+            filenames_flight_tracker_db.append(filename)
+
             # only get rnog data if files don't already exist in './data/'
             if not filename.split('-')[0] in file_dates:
-                FlightTracker.get_rnog_data(filename=filename)
+                FlightTracker.download_flight_tracker_db_files(filename=filename)
                 #print(f"'./data/{filename.replace('.gz', '')}' already exists!")
                 
         # Overwrite files with unzipped version
@@ -204,6 +210,10 @@ class FlightTracker:
         # process files to one big db file
         FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), tablename = 'flights')
 
+    #-------------------------------------------------------------------------------------------------------------------
+    def get_flight_by_index(self, i):
+        return Flight(self, i)
+    
     #-------------------------------------------------------------------------------------------------------------------
     def set_flight_index(self, i):
         index = i
@@ -219,7 +229,7 @@ class FlightTracker:
         self.start_time_plot = FlightTracker.utc.localize(datetime.strptime(self.start_time_plot, FlightTracker.fmt))
         self.stop_time_plot = FlightTracker.utc.localize(datetime.strptime(self.stop_time_plot, FlightTracker.fmt))
 
-        self.header_df = FlightTracker.get_runtable(self.start_time_plot, self.stop_time_plot)
+        self.header_df = FlightTracker.get_df_from_root_file(self.start_time_plot, self.stop_time_plot)
         
         self.f = self.flights.query(f"readtime_utc >= '{datetime.strftime(self.start_time_plot, FlightTracker.fmt)}' & readtime_utc <= '{datetime.strftime(self.stop_time_plot, FlightTracker.fmt)}' & flightnumber == '{self.flightnumber}' ").copy()
         #f = flights_60.query(f"readtime >= '{start_timestamp}' & readtime <= '{stop_timestamp}'").copy()
@@ -230,12 +240,10 @@ class FlightTracker:
         print('''"'''  + self.start_time_plot.strftime("%Y-%m-%dT%H:%M:%S") + '''"''', '''"''' + self.stop_time_plot.strftime("%Y-%m-%dT%H:%M:%S") +  '''"''' + f' duration: {self.stop_time_plot - self.start_time_plot} [s]')
         print(self.flightnumber)
 
-
-    
     #-------------------------------------------------------------------------------------------------------------------
-    def get_runtable(start_time, stop_time):
+    def get_df_from_root_file(start_time, stop_time, file = 'headers.root'):
         # getting runtable information and downloading header files
-        runtable = FlightTracker.rnogcopy(start_time, stop_time) 
+        runtable = FlightTracker.rnogcopy(start_time, stop_time, file) 
         #print(runtable)
         # check if files exits for flightnumber and time
         if len(runtable) == 0:
@@ -252,7 +260,7 @@ class FlightTracker:
                 filenames.append([filename for filename in os.listdir('./header/') if re.search(runtable.station_string.iloc[i], filename) and re.search(runtable.run_string.iloc[i], filename)][0])
             except IndexError:
                 print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
-        # read all header.root files in one DataFrame
+        # read all headers.root files in one DataFrame
         header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
         for filename in filenames:
             file = uproot.open("header/" + filename)
@@ -274,7 +282,17 @@ class FlightTracker:
         return header_df
 
     #-------------------------------------------------------------------------------------------------------------------
-    def rnogcopy(start_time, stop_time, filename='headers.root'):
+
+    #-------------------------------------------------------------------------------------------------------------------
+    def rnogcopy(start_time, stop_time, file='headers.root'):
+
+        #check for filetype
+        if file == 'headers.root':
+            path = 'header'
+        elif file == 'combined.root':
+            path = 'combined'
+        else:
+            print(f'Unknown filename: {file}')
 
         # get runtable
         rnog_table = RunTable()
@@ -283,17 +301,16 @@ class FlightTracker:
         # check if files already exist in './header/'
         files_exist = True
         for i in range(len(table)):
-            filename = 'station' + str(table.station.iloc[i]) + '_run' + str(table.run.iloc[i]) + '_headers.root'
-            if not os.path.exists('./header/' + filename):
+            filename = 'station' + str(table.station.iloc[i]) + '_run' + str(table.run.iloc[i]) + f'_{file}'
+            if not os.path.exists(f'./{path}/{filename}'):
                 files_exist = False
         
         if not files_exist:
-            cmd = (f'''rnogcopy time "{str(datetime.strftime(start_time, '%Y-%m-%dT%H:%M:%S'))}" "{str(datetime.strftime(stop_time, '%Y-%m-%dT%H:%M:%S'))}" --filename=headers.root''')
+            cmd = (f'''rnogcopy time "{str(datetime.strftime(start_time, '%Y-%m-%dT%H:%M:%S'))}" "{str(datetime.strftime(stop_time, '%Y-%m-%dT%H:%M:%S'))}" --filename={file}''')
 
             # "> /dev/null 2>&1" to suppress output 
-            os.system("cd header && " + cmd + "> /dev/null 2>&1" + " && cd ..")
-            #os.system("cd header && " + cmd + " && cd ..")
-        
+            os.system(f"cd {path} && " + cmd + "> /dev/null 2>&1" + " && cd ..")
+
         #returning the information about the downloaded header files as a pandas dataframe
         return table
     #-------------------------------------------------------------------------------------------------------------------
@@ -417,7 +434,9 @@ class FlightTracker:
 
     #-------------------------------------------------------------------------------------------------------------------
     def show_flights(self):
-        print(self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']])
+        self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']].head(20)
+
+        #print(self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']])
 
     #-------------------------------------------------------------------------------------------------------------------
 
@@ -470,6 +489,22 @@ class FlightTracker:
                 flights_distinct.drop(columns = ['index'], inplace = True)
             IPython.display.clear_output
             print(flights_distinct.head(50))
+
+
+    #-------------------------------------------------------------------------------------------------------------------
+    def create_dirs():
+        # data for flight_tracker data
+        if not os.path.exists('./data/'):
+            os.system('mkdir data')
+        # flights for db files containing processed flight_tracker data
+        if not os.path.exists('./flights/'):
+            os.system('mkdir flights')
+        # header files
+        if not os.path.exists('./header/'):
+            os.system('mkdir header')
+        # combined files
+        if not os.path.exists('./combined/'):
+            os.system('mkdir combined')
     #-------------------------------------------------------------------------------------------------------------------
     #-------------------------------------------------------------------------------------------------------------------
     
@@ -482,6 +517,9 @@ class FlightTracker:
     fmt = '%Y-%m-%d %H:%M:%S'
 
     def __init__(self, start_time, stop_time=None):
+        #make dirs
+        FlightTracker.create_dirs()
+
         self.start_time = FlightTracker.utc.localize(datetime.strptime(start_time, FlightTracker.fmt))
         if stop_time == None:
             self.stop_time = self.start_time + timedelta(days=1)
@@ -490,9 +528,6 @@ class FlightTracker:
 
         # initialize stations dataframe
         self.stations = FlightTracker.init_stations()
-        FlightTracker.get_flight_data(self.start_time, self.stop_time) # downloads flight tracker data and saves a db file with flights / flights_distinct
-        self.flights, self.flights_distinct = FlightTracker.get_flights(self.start_time, self.stop_time) # load flights / flights_distinct from a db file
-
-    
-
-    
+        
+        FlightTracker.download_and_process_db_files(self.start_time, self.stop_time) # downloads flight tracker data and saves a db file with flights / flights_distinct
+        self.flights, self.flights_distinct = FlightTracker.get_flights_and_flights_distinct(self.start_time, self.stop_time) # load flights / flights_distinct from a db file
