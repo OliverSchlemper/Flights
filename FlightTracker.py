@@ -244,7 +244,6 @@ class FlightTracker:
     def get_df_from_root_file(start_time, stop_time, file = 'headers.root'):
         # getting runtable information and downloading header files
         runtable = FlightTracker.rnogcopy(start_time, stop_time, file) 
-        #print(runtable)
         # check if files exits for flightnumber and time
         if len(runtable) == 0:
             sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
@@ -343,7 +342,7 @@ class FlightTracker:
         self.fig.suptitle(self.flightnumber + ', ' + self.date + ''', "''' + str(self.start_time_plot) + '''", "''' + str(self.stop_time_plot) + '''"''')
 
         #------------------------------------------------------------------------------------------------------
-        #------------------------------------------------------------------------------------------------------
+        #-----------------------------------------------------------------------filedir-------------------------------
         # ax[0]
         self.ax[0, 0].set_xlabel('longitude [deg]')
         self.ax[0, 0].set_ylabel('latitude [deg]')

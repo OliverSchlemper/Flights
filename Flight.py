@@ -13,10 +13,13 @@ import matplotlib.colors as mcolors
 from pandasql import sqldf
 from rnog_data.runtable import RunTable
 from datetime import datetime, timedelta
+from NuRadioReco.utilities import units
 
 from NuRadioReco.modules.io.RNO_G.readRNOGDataMattak import readRNOGData
 
 class Flight:
+
+    path_to_combined_files = '/home/oliver/software/Flights/combined/'
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
     def __init__(self, flighttracker, i):
@@ -35,7 +38,7 @@ class Flight:
             self.start_time_plot = FlightTracker.utc.localize(datetime.strptime(self.start_time_plot, FlightTracker.fmt))
             self.stop_time_plot = FlightTracker.utc.localize(datetime.strptime(self.stop_time_plot, FlightTracker.fmt))
 
-            self.header_df = FlightTracker.get_df_from_root_file(self.start_time_plot, self.stop_time_plot)
+            self.header_df = Flight.get_what_ever_is_in_those_root_files(self.start_time_plot, self.stop_time_plot)
 
             self.flights = flighttracker.flights.query( f"readtime_utc >= '{datetime.strftime(self.start_time_plot, FlightTracker.fmt)}' & "
                                                         f"readtime_utc <= '{datetime.strftime(self.stop_time_plot, FlightTracker.fmt)}' & "
@@ -48,9 +51,46 @@ class Flight:
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
 
-    def get_what_ever_is_in_that_root_file(start_time, stop_time, filetype = 'headers.root'):
-        from FlightTracker import FlightTracker
+    #------------------------------------------------------------------------------------------------------
+    def calc_l1_max_and_amp_max_and_SNR_max(event, station_number):
+        #print(station_number)
+        l1_max = 0
+        amp_max = 0
+        SNR_max = 0
+        station = event.get_station(station_number)
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = np.abs(channel.get_trace())
+            #times = channel.get_times()
 
+            freq = channel.get_frequencies()
+            mask = (0.05 < freq) & (freq < 0.8) & (freq != 0.2)
+            freq = freq[mask]
+            spectrum = np.abs(channel.get_frequency_spectrum())[mask]
+
+            #calculate
+            l1 = Flight.simple_l1(spectrum)
+            amp = np.max(trace)
+            avg = np.average(trace)
+            SNR = amp / avg
+
+            #check
+            if l1 > l1_max:
+                l1_max = l1
+            if amp > amp_max:
+                amp_max = amp
+            if SNR > SNR_max:
+                SNR_max = SNR
+        return l1_max, amp_max, SNR_max
+
+    #------------------------------------------------------------------------------------------------------
+    
+    def simple_l1(frequencies):
+        return np.max(frequencies**2)/np.sum(frequencies**2)
+    #------------------------------------------------------------------------------------------------------
+    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'headers.root'):
+        from FlightTracker import FlightTracker
+        
         if filetype == 'headers.root':
             path = 'header'
         elif filetype == 'combined.root':
@@ -79,33 +119,100 @@ class Flight:
                 print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
         
         header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
-        combined_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
 
         for filename in filenames:
             file = uproot.open(f"{path}/" + filename)
-            temp_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
-            #times = pd.to_datetime(np.array(file['header']['header/trigger_time']), unit = 's')
-            # make mast to slice all data
-            #mask = (times >= pd.to_datetime(start_time).tz_convert(None)) & (times <= pd.to_datetime(stop_time).tz_convert(None))
+            temp_df = pd.DataFrame()
+            
+            # make mask to slice all data
+            times = pd.to_datetime(np.array(file[path]['header/trigger_time']), unit = 's')
+            mask = (times >= pd.to_datetime(start_time).tz_convert(None)) & (times <= pd.to_datetime(stop_time).tz_convert(None))
 
-            temp_df['trigger_time'] = np.array(file['header']['header/trigger_time'])
-            temp_df['station_number'] = np.array(file['header']['header/station_number'])
-            temp_df['radiant_triggers'] = np.array(file['header']['header/trigger_info/trigger_info.radiant_trigger'])
-            temp_df['lt_triggers'] = np.array(file['header']['header/trigger_info/trigger_info.lt_trigger'])
-
-
+            # header information
+            temp_df['station_number'] = np.array(file[path]['header/station_number'])[mask]
+            temp_df['run_number'] = np.array(file[path]['header/run_number'])[mask]
+            temp_df['event_number'] = np.array(file[path]['header/event_number'])[mask]
+            temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])[mask]
+            temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])[mask]
+            temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])[mask]
+            run_nr = np.array(file[path]['header/run_number'])[0]
+            # combinded (waveform) information
+            
             if filetype == 'combined.root':
-                mask = (times >= start_time) & (times <= stop_time)
+                #temp_df['event_number'] = np.array(file['combined/header/event_number'])[mask]
+                reader = readRNOGData()
 
+                reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz)
 
-        if len(header_df) == 0:
+                l1s = np.zeros(len(temp_df.event_number))
+                amps = np.zeros(len(temp_df.event_number))
+                SNRs = np.zeros(len(temp_df.event_number))
+                for i in range(len(temp_df.event_number)):
+                    l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i])
+                    l1s[i] = l1
+                    amps[i] = amp
+                    SNRs[i] = SNR
+
+                temp_df['l1_max'] = l1s
+                temp_df['amp_max'] = amps
+                temp_df['SNR_max'] = SNRs
+                l1_threshold = 0.4
+                SNR_threshold = 10
+                temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
+                temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
+                #tags = np.where((l1s > l1_threshold) & (SNRs > SNR_threshold), 'both', np.where(l1s > l1_threshold, 'cw', np.where(SNRs > SNR_threshold, 'impulsive', None)))
+                #temp_df['tag'] = tags
+            
+            # save header information
+            if len(header_df) == 0:
                 header_df = temp_df
-        else:
-            header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
+            else:
+                header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
 
-
-        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
+        #header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
+        header_df['index'] = range(0, len(header_df))
         return header_df
+
+
+    #------------------------------------------------------------------------------------------------------
+    def plot_event_by_id(self, i):
+        station_number = self.header_df.station_number.iloc[i]
+        run_number = self.header_df.run_number.iloc[i]
+        event_number = self.header_df.event_number.iloc[i]
+
+        reader = readRNOGData()
+        reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz)
+
+        evt = reader.get_event(run_nr=run_number, event_id=event_number)
+        station = evt.get_station(station_number)
+        
+
+        fig, (ax0, ax1) = plt.subplots(2)
+        fig.subplots_adjust(hspace=0.3)
+        fig.suptitle(f'station: {station_number}, run: {run_number}, event_id: {event_number}, 24 channels')
+        ax0.plot([], [], label = 'trace')
+        ax1.plot([], [], label = 'fourier transform')
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = channel.get_trace()
+            times = channel.get_times()
+            spectrum = np.abs(channel.get_frequency_spectrum())
+            freq = channel.get_frequencies()
+            mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
+            spectrum = spectrum[mask]
+            freq = freq[mask]
+
+            alpha = 0.5
+            ax0.plot(times[:], trace[:], '-', alpha = alpha)
+            ax1.plot(freq, spectrum, alpha = alpha)
+
+        ax0.set_xlabel('time [ns]')
+        ax0.set_ylabel('amplitude ~ [mV]')
+        ax0.legend()
+        ax1.set_xlabel('frequency [MHz]')
+        ax1.set_ylabel('amplitude')
+        ax1.legend()
+
 
 
 
@@ -144,6 +251,7 @@ class Flight:
         self.n_bins = np.arange(self.start_time_plot.timestamp(), self.stop_time_plot.timestamp(), 10)
         n_bins = self.n_bins
 
+        #print(pd.to_datetime(self.header_df.trigger_time.min(), unit = 's'), pd.to_datetime(self.header_df.trigger_time.max(), unit = 's'))
         self.ax[1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
         self.ax[1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
 
