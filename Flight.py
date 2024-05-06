@@ -179,6 +179,15 @@ class Flight:
         station_number = self.header_df.station_number.iloc[i]
         run_number = self.header_df.run_number.iloc[i]
         event_number = self.header_df.event_number.iloc[i]
+        lt_trigger = self.header_df.lt_triggers.iloc[i]
+        radiant_trigger = self.header_df.radiant_triggers.iloc[i]
+
+        if lt_trigger == True:
+            trigger_type = 'lt'
+        elif radiant_trigger == True:
+            trigger_type = 'radiant'
+        else:
+            trigger_type = 'Unknown'
 
         reader = readRNOGData()
         reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz)
@@ -189,7 +198,7 @@ class Flight:
 
         fig, (ax0, ax1) = plt.subplots(2)
         fig.subplots_adjust(hspace=0.3)
-        fig.suptitle(f'station: {station_number}, run: {run_number}, event_id: {event_number}, 24 channels')
+        fig.suptitle(f'station: {station_number}, run: {run_number}, event_id: {event_number}, trigger: {trigger_type}, 24 channels')
         ax0.plot([], [], label = 'trace')
         ax1.plot([], [], label = 'fourier transform')
         for i in range(24):
