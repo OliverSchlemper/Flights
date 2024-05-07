@@ -124,6 +124,7 @@ class Flight:
             file = uproot.open(f"{path}/" + filename)
             temp_df = pd.DataFrame()
             
+            '''
             # make mask to slice all data
             times = pd.to_datetime(np.array(file[path]['header/trigger_time']), unit = 's')
             mask = (times >= pd.to_datetime(start_time).tz_convert(None)) & (times <= pd.to_datetime(stop_time).tz_convert(None))
@@ -137,42 +138,86 @@ class Flight:
             temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])[mask]
             run_nr = np.array(file[path]['header/run_number'])[0]
             # combinded (waveform) information
-            
+            '''
+
+#            header information
+            temp_df['station_number'] = np.array(file[path]['header/station_number'])
+            temp_df['run_number'] = np.array(file[path]['header/run_number'])
+            temp_df['event_number'] = np.array(file[path]['header/event_number'])
+            temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])
+            temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])
+            temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])
+            run_nr = np.array(file[path]['header/run_number'])[0]
+            # combinded (waveform) information
+
             if filetype == 'combined.root':
-                #temp_df['event_number'] = np.array(file['combined/header/event_number'])[mask]
-                reader = readRNOGData()
+                
+                # if combined scores already exist for that root file (run, station) then join them instead of calculating
+                path_combined_scores = f'./combined_scores/{filename[:-5]}_scores.db' # remove '.root' from filename
+                if os.path.exists(path_combined_scores): 
+                    # Establish a connection to the SQLite database
+                    con = sqlite3.connect(path_combined_scores)
+                    
+                    # get combined_scores from db file and join on temp_df
+                    temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
+                    temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
+                    
+                    # Close the database connection
+                    con.close()
+                else:
+                    reader = readRNOGData()
 
-                reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz)
+                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz)
 
-                l1s = np.zeros(len(temp_df.event_number))
-                amps = np.zeros(len(temp_df.event_number))
-                SNRs = np.zeros(len(temp_df.event_number))
-                for i in range(len(temp_df.event_number)):
-                    l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i])
-                    l1s[i] = l1
-                    amps[i] = amp
-                    SNRs[i] = SNR
+                    l1s = np.zeros(len(temp_df.event_number))
+                    amps = np.zeros(len(temp_df.event_number))
+                    SNRs = np.zeros(len(temp_df.event_number))
+                    for i in range(len(temp_df.event_number)):
+                        l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i])
+                        l1s[i] = l1
+                        amps[i] = amp
+                        SNRs[i] = SNR
 
-                temp_df['l1_max'] = l1s
-                temp_df['amp_max'] = amps
-                temp_df['SNR_max'] = SNRs
-                l1_threshold = 0.4
-                SNR_threshold = 10
-                temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
-                temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
-                #tags = np.where((l1s > l1_threshold) & (SNRs > SNR_threshold), 'both', np.where(l1s > l1_threshold, 'cw', np.where(SNRs > SNR_threshold, 'impulsive', None)))
-                #temp_df['tag'] = tags
-            
+                    temp_df['l1_max'] = l1s
+                    temp_df['amp_max'] = amps
+                    temp_df['SNR_max'] = SNRs
+                    l1_threshold = 0.4
+                    SNR_threshold = 10
+                    temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
+                    temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
+
+                    Flight.write_combined_scores_to_db(temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']], filename[:-5])
+
             # save header information
             if len(header_df) == 0:
                 header_df = temp_df
             else:
                 header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
 
-        #header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
+        # since we are processing whole file again in order to save the scores, we need to filter for desired time interval
+        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         header_df['index'] = range(0, len(header_df))
+        if filetype == 'combined.root':
+            header_df = header_df[['index', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']] # change order to have index in front
+        else:
+            header_df = header_df[['index', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers']] # change order to have index in front
+
         return header_df
 
+
+
+    #-------------------------------------------------------------------------------------------------------------------
+    def write_combined_scores_to_db(df, filename='test', tablename='combined_scores'):
+        path = f'./combined_scores/{filename}_scores.db'
+
+        # Establish a connection to the SQLite database
+        con = sqlite3.connect(path)
+        
+        # Write the DataFrame to the SQLite database
+        df.to_sql(tablename, con, if_exists='append')
+        
+        # Close the database connection
+        con.close()
 
     #------------------------------------------------------------------------------------------------------
     def plot_event_by_id(self, i):
@@ -199,6 +244,8 @@ class Flight:
         fig, (ax0, ax1) = plt.subplots(2)
         fig.subplots_adjust(hspace=0.3)
         fig.suptitle(f'station: {station_number}, run: {run_number}, event_id: {event_number}, trigger: {trigger_type}, 24 channels')
+        
+        # setting labels
         ax0.plot([], [], label = 'trace')
         ax1.plot([], [], label = 'fourier transform')
         for i in range(24):

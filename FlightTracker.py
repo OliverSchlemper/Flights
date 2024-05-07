@@ -504,6 +504,9 @@ class FlightTracker:
         # combined files
         if not os.path.exists('./combined/'):
             os.system('mkdir combined')
+        # combined scores (l1, max_amplitude, SNR)
+        if not os.path.exists('./combined_scores/'):
+            os.system('mkdir combined_scores')
     #-------------------------------------------------------------------------------------------------------------------
     #-------------------------------------------------------------------------------------------------------------------
     
