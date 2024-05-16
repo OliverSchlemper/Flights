@@ -22,7 +22,7 @@ class Flight:
     path_to_combined_files = '/home/oliver/software/Flights/combined/'
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
-    def __init__(self, flighttracker, i):
+    def __init__(self, flighttracker, i, rebuild_combined_scores=False):
         from FlightTracker import FlightTracker
         if not i < len(flighttracker.flights_distinct):
             print(f'index {i} out of bounds for flights_distinct with size {len(flighttracker.flights_distinct)}')
@@ -38,7 +38,7 @@ class Flight:
             self.start_time_plot = FlightTracker.utc.localize(datetime.strptime(self.start_time_plot, FlightTracker.fmt))
             self.stop_time_plot = FlightTracker.utc.localize(datetime.strptime(self.stop_time_plot, FlightTracker.fmt))
 
-            self.header_df = Flight.get_what_ever_is_in_those_root_files(self.start_time_plot, self.stop_time_plot, filetype='combined.root')
+            self.header_df = Flight.get_what_ever_is_in_those_root_files(self.start_time_plot, self.stop_time_plot, filetype='combined.root', rebuild_combined_scores=rebuild_combined_scores)
 
             self.flights = flighttracker.flights.query( f"readtime_utc >= '{datetime.strftime(self.start_time_plot, FlightTracker.fmt)}' & "
                                                         f"readtime_utc <= '{datetime.strftime(self.stop_time_plot, FlightTracker.fmt)}' & "
@@ -50,20 +50,26 @@ class Flight:
             #print(self.flightnumber)
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
-    def calculate_avg_RMS(path):
-        pass
+    def calculate_avg_RMS(event, station_number):
+        station = event.get_station(station_number)
+        RMSs = np.zeros(24) # save avg for each channel here
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = channel.get_trace()
+            RMSs[i] = np.sqrt(np.mean(trace**2))
+        return RMSs
 
     #------------------------------------------------------------------------------------------------------
-    def calc_l1_max_and_amp_max_and_SNR_max(event, station_number):
+    def calc_l1_max_and_amp_max_and_SNR_max(event, station_number, avg_RMS):
         #print(station_number)
         l1_max = 0
         amp_max = 0
         SNR_max = 0
-        RMS_max = 0
+        #RMS_max = 0
         station = event.get_station(station_number)
         for i in range(24):
             channel = station.get_channel(i)
-            trace = np.abs(channel.get_trace())
+            trace = channel.get_trace()
             times = channel.get_times()
             times_mask = (times < 0)
 
@@ -74,25 +80,25 @@ class Flight:
 
             #calculate
             l1 = Flight.simple_l1(spectrum)
-            amp = np.max(trace)
+            amp = np.max(np.abs(trace))
             #avg = np.average(trace)
-            RMS = np.sqrt(np.mean(trace[times_mask]**2))
-            SNR = amp / RMS
+            #RMS = np.sqrt(np.mean(trace[times_mask]**2))
+            SNR = amp / avg_RMS[i]
 
             #check
             l1_max  = max(l1, l1_max)
             SNR_max = max(SNR, SNR_max)
-            RMS_max = max(RMS, RMS_max)
+            #RMS_max = max(RMS, RMS_max)
             amp_max = max(amp, amp_max)
 
-        return l1_max, amp_max, SNR_max, RMS_max
+        return l1_max, amp_max, SNR_max#, RMS_max
 
     #------------------------------------------------------------------------------------------------------
     
     def simple_l1(frequencies):
         return np.max(frequencies**2)/np.sum(frequencies**2)
     #------------------------------------------------------------------------------------------------------
-    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'headers.root'):
+    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'headers.root', rebuild_combined_scores=False):
         from FlightTracker import FlightTracker
         
         if filetype == 'headers.root':
@@ -160,7 +166,7 @@ class Flight:
                 
                 # if combined scores already exist for that root file (run, station) then join them instead of calculating
                 path_combined_scores = f'./combined_scores/{filename[:-5]}_scores.db' # remove '.root' from filename
-                if os.path.exists(path_combined_scores): 
+                if os.path.exists(path_combined_scores) & (rebuild_combined_scores == False): 
                     # Establish a connection to the SQLite database
                     con = sqlite3.connect(path_combined_scores)
                     
@@ -173,34 +179,38 @@ class Flight:
                 else:
                     reader = readRNOGData()
 
-                    combined_file_name = f'{Flight.path_to_combined_files}{filename}'
+                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz)
 
-                    reader.begin([combined_file_name], overwrite_sampling_rate=3200*units.MHz)
-
-                    #avg_RMS = Flight.calculate_avg_RMS(combined_file_name)
+                    # calculate avg RMS per force trigger event and then get an average for each station, run, channel
+                    force_trigger_events_in_this_file = temp_df.event_number[temp_df.force_triggers == True]
+                    avg_RMSs = np.zeros((len(force_trigger_events_in_this_file), 24)) # 2D array with rows for every event and 24 columns for each channels
+                    for i in range(len(force_trigger_events_in_this_file)): # only look at force trigger events
+                        avg_RMSs[i] = Flight.calculate_avg_RMS(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i]) # row i gets the avg values for all 24 antennas for event i
+                    avg_RMS = np.mean(avg_RMSs, axis=0)
 
                     l1s = np.zeros(len(temp_df.event_number))
                     amps = np.zeros(len(temp_df.event_number))
                     SNRs = np.zeros(len(temp_df.event_number))
-                    RMSs = np.zeros(len(temp_df.event_number))
+                    #RMSs = np.zeros(len(temp_df.event_number))
                     for i in range(len(temp_df.event_number)):
-                        l1, amp, SNR, RMS = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i])
+                        l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
                         l1s[i] = l1
                         amps[i] = amp
                         SNRs[i] = SNR
-                        RMSs[i] = RMS
+                        #RMSs[i] = RMS
 
                     temp_df['l1_max'] = l1s
                     temp_df['amp_max'] = amps
                     temp_df['SNR_max'] = SNRs
-                    temp_df['RMS_max'] = RMSs
+                    #temp_df['RMS_max'] = RMSs
                     l1_threshold = 0.4
                     SNR_threshold = 10
                     temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
                     temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
                     temp_df['noise'] = np.where(SNRs == None, 1, 0)
 
-                    Flight.write_combined_scores_to_db(temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive', 'noise']], filename[:-5])
+                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']], filename = filename[:-5])
+                    Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
             # save header information
             if len(header_df) == 0:
@@ -210,11 +220,11 @@ class Flight:
 
         # since we are processing whole file again in order to save the scores, we need to filter for desired time interval
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
-        header_df['index'] = range(0, len(header_df))
+        header_df['i'] = range(0, len(header_df))
         if filetype == 'combined.root':
-            header_df = header_df[['index', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive', 'noise']] # change order to have index in front
+            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']] # change order to have index in front
         else:
-            header_df = header_df[['index', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
+            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
 
         return header_df
 
@@ -234,12 +244,13 @@ class Flight:
         con.close()
 
     #------------------------------------------------------------------------------------------------------
-    def plot_event_by_id(self, i):
-        station_number = self.header_df.station_number.iloc[i]
-        run_number = self.header_df.run_number.iloc[i]
-        event_number = self.header_df.event_number.iloc[i]
-        lt_trigger = self.header_df.lt_triggers.iloc[i]
-        radiant_trigger = self.header_df.radiant_triggers.iloc[i]
+    def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, multichannel=True, channels=None):
+        if i != None:
+            station_number = self.header_df.station_number.iloc[i]
+            run_number = self.header_df.run_number.iloc[i]
+            event_number = self.header_df.event_number.iloc[i]
+            lt_trigger = self.header_df.lt_triggers.iloc[i]
+            radiant_trigger = self.header_df.radiant_triggers.iloc[i]
 
         if lt_trigger == True:
             trigger_type = 'lt'
@@ -254,34 +265,58 @@ class Flight:
         evt = reader.get_event(run_nr=run_number, event_id=event_number)
         station = evt.get_station(station_number)
         
+        if multichannel == True:
+            fig, (ax0, ax1) = plt.subplots(2, figsize = (20, 7.5))
+            fig.subplots_adjust(hspace=0.3)
+            fig.suptitle(f'station: {station_number}, run: {run_number}, event: {event_number}, trigger: {trigger_type}, 24 channels')
+            
+            # setting labels
+            ax0.plot([], [], label = 'trace')
+            ax1.plot([], [], label = 'fourier transform')
+            for i in range(24):
+                channel = station.get_channel(i)
+                trace = channel.get_trace()
+                times = channel.get_times()
+                spectrum = np.abs(channel.get_frequency_spectrum())
+                freq = channel.get_frequencies()
+                mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
+                spectrum = spectrum[mask]
+                freq = freq[mask]
 
-        fig, (ax0, ax1) = plt.subplots(2, figsize = (20, 7.5))
-        fig.subplots_adjust(hspace=0.3)
-        fig.suptitle(f'station: {station_number}, run: {run_number}, event: {event_number}, trigger: {trigger_type}, 24 channels')
-        
-        # setting labels
-        ax0.plot([], [], label = 'trace')
-        ax1.plot([], [], label = 'fourier transform')
-        for i in range(24):
-            channel = station.get_channel(i)
-            trace = channel.get_trace()
-            times = channel.get_times()
-            spectrum = np.abs(channel.get_frequency_spectrum())
-            freq = channel.get_frequencies()
-            mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
-            spectrum = spectrum[mask]
-            freq = freq[mask]
+                alpha = 0.5
+                ax0.plot(times[:], trace[:], '-', alpha = alpha)
+                ax1.plot(freq, spectrum, alpha = alpha)
 
-            alpha = 0.5
-            ax0.plot(times[:], trace[:], '-', alpha = alpha)
-            ax1.plot(freq, spectrum, alpha = alpha)
+            ax0.set_xlabel('time [ns]')
+            ax0.set_ylabel('amplitude ~ [mV]')
+            ax0.legend()
+            ax1.set_xlabel('frequency [MHz]')
+            ax1.set_ylabel('amplitude')
+            ax1.legend()
+        else:
+            fig, ax = plt.subplots(8, 6, figsize = (20, 7.5))
+            fig.subplots_adjust(hspace=0.1, wspace=0.1)
+            fig.suptitle(f'station: {station_number}, run: {run_number}, event: {event_number}, trigger: {trigger_type}, 24 channels')
+            channel_number = 0
+            for i in range(4):
+                for j in range(6):
+                    channel = station.get_channel(channel_number)
+                    trace = channel.get_trace()
+                    times = channel.get_times()
+                    spectrum = np.abs(channel.get_frequency_spectrum())
+                    freq = channel.get_frequencies()
+                    mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
+                    spectrum = spectrum[mask]
+                    freq = freq[mask]
 
-        ax0.set_xlabel('time [ns]')
-        ax0.set_ylabel('amplitude ~ [mV]')
-        ax0.legend()
-        ax1.set_xlabel('frequency [MHz]')
-        ax1.set_ylabel('amplitude')
-        ax1.legend()
+                    alpha = 1
+                    ax[2 * i, j].plot(times, trace, '-', alpha = alpha, label = channel_number)
+                    ax[2 * i + 1, j].plot(freq, spectrum, alpha = alpha)
+
+                    channel_number += 1
+            for axes in ax.reshape(-1):
+                axes.legend()
+            
 
 
 
