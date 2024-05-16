@@ -245,17 +245,22 @@ class Flight:
 
     #------------------------------------------------------------------------------------------------------
     def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, multichannel=True, channels=None):
+        if channels == None:
+            channels = range(24)
         if i != None:
             station_number = self.header_df.station_number.iloc[i]
             run_number = self.header_df.run_number.iloc[i]
             event_number = self.header_df.event_number.iloc[i]
             lt_trigger = self.header_df.lt_triggers.iloc[i]
             radiant_trigger = self.header_df.radiant_triggers.iloc[i]
+            force_trigger = self.header_df.force_triggers.iloc[i]
 
         if lt_trigger == True:
             trigger_type = 'lt'
         elif radiant_trigger == True:
             trigger_type = 'radiant'
+        elif force_trigger == True:
+            trigger_type = 'force'
         else:
             trigger_type = 'Unknown'
 
@@ -273,7 +278,7 @@ class Flight:
             # setting labels
             ax0.plot([], [], label = 'trace')
             ax1.plot([], [], label = 'fourier transform')
-            for i in range(24):
+            for i in channels:
                 channel = station.get_channel(i)
                 trace = channel.get_trace()
                 times = channel.get_times()
