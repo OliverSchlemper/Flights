@@ -206,10 +206,10 @@ class Flight:
                     l1_threshold = 0.4
                     SNR_threshold = 10
                     temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
-                    temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
-                    temp_df['noise'] = np.where(SNRs == None, 1, 0)
+                    temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
+                    #temp_df['noise'] = np.where(SNRs == None, 1, 0)
 
-                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']], filename = filename[:-5])
+                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']], filename = filename[:-5])
                     Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
             # save header information
@@ -222,7 +222,7 @@ class Flight:
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         header_df['i'] = range(0, len(header_df))
         if filetype == 'combined.root':
-            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']] # change order to have index in front
+            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']] # change order to have index in front
         else:
             header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
 
@@ -244,7 +244,7 @@ class Flight:
         con.close()
 
     #------------------------------------------------------------------------------------------------------
-    def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, force_trigger=None, multichannel=True, channels=None):
+    def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, force_trigger=None, multichannel=True, channels=None, fk_station_run_event=None):
         if i != None:
             station_number = self.header_df.station_number.iloc[i]
             run_number = self.header_df.run_number.iloc[i]
@@ -255,6 +255,14 @@ class Flight:
 
         if channels == None:
             channels = range(24)
+        
+        if fk_station_run_event != None:
+            parts = str(fk_station_run_event).split("_")
+
+            # Assign each part to a separate variable
+            station_number = int(parts[0])
+            run_number = int(parts[1])
+            event_number = int(parts[2])
 
         if lt_trigger == True:
             trigger_type = 'lt'
@@ -328,9 +336,9 @@ class Flight:
 
 
     #------------------------------------------------------------------------------------------------------
-    def plot_flight(self):
+    def plot_flight(self, figsize=(10, 5)):
         from FlightTracker import FlightTracker
-        self.fig, self.ax = plt.subplots(1, 2, figsize=(10, 5), dpi=100)
+        self.fig, self.ax = plt.subplots(1, 2, figsize=figsize, dpi=100)
         self.fig.subplots_adjust(hspace=0.3, wspace=0.4)
         self.fig.suptitle(self.flightnumber + ', ' + self.date + ''', "''' + str(self.start_time_plot) + '''", "''' + str(self.stop_time_plot) + '''"''')
 
