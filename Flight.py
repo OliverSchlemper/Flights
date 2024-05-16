@@ -65,7 +65,7 @@ class Flight:
         l1_max = 0
         amp_max = 0
         SNR_max = 0
-        #RMS_max = 0
+        RMS_max = 0
         station = event.get_station(station_number)
         for i in range(24):
             channel = station.get_channel(i)
@@ -82,16 +82,16 @@ class Flight:
             l1 = Flight.simple_l1(spectrum)
             amp = np.max(np.abs(trace))
             #avg = np.average(trace)
-            #RMS = np.sqrt(np.mean(trace[times_mask]**2))
-            SNR = amp / avg_RMS[i]
+            RMS = np.sqrt(np.mean(trace[times_mask]**2))
+            SNR = amp / RMS
 
             #check
             l1_max  = max(l1, l1_max)
             SNR_max = max(SNR, SNR_max)
-            #RMS_max = max(RMS, RMS_max)
+            RMS_max = max(RMS, RMS_max)
             amp_max = max(amp, amp_max)
 
-        return l1_max, amp_max, SNR_max#, RMS_max
+        return l1_max, amp_max, SNR_max, RMS_max
 
     #------------------------------------------------------------------------------------------------------
     
@@ -191,25 +191,25 @@ class Flight:
                     l1s = np.zeros(len(temp_df.event_number))
                     amps = np.zeros(len(temp_df.event_number))
                     SNRs = np.zeros(len(temp_df.event_number))
-                    #RMSs = np.zeros(len(temp_df.event_number))
+                    RMSs = np.zeros(len(temp_df.event_number))
                     for i in range(len(temp_df.event_number)):
-                        l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                        l1, amp, SNR, RMS = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
                         l1s[i] = l1
                         amps[i] = amp
                         SNRs[i] = SNR
-                        #RMSs[i] = RMS
+                        RMSs[i] = RMS
 
                     temp_df['l1_max'] = l1s
                     temp_df['amp_max'] = amps
                     temp_df['SNR_max'] = SNRs
-                    #temp_df['RMS_max'] = RMSs
+                    temp_df['RMS_max'] = RMSs
                     l1_threshold = 0.4
                     SNR_threshold = 10
                     temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
                     temp_df['impulsive'] = np.where(SNRs > SNR_threshold, 1, 0)
                     temp_df['noise'] = np.where(SNRs == None, 1, 0)
 
-                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']], filename = filename[:-5])
+                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'RMS_max', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']], filename = filename[:-5])
                     Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
             # save header information
@@ -222,7 +222,7 @@ class Flight:
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         header_df['i'] = range(0, len(header_df))
         if filetype == 'combined.root':
-            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']] # change order to have index in front
+            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'RMS_max', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive', 'noise']] # change order to have index in front
         else:
             header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
 
@@ -244,7 +244,7 @@ class Flight:
         con.close()
 
     #------------------------------------------------------------------------------------------------------
-    def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, multichannel=True, channels=None):
+    def plot_event_by_id(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, force_trigger=None, multichannel=True, channels=None):
         if channels == None:
             channels = range(24)
         if i != None:
@@ -284,7 +284,7 @@ class Flight:
                 times = channel.get_times()
                 spectrum = np.abs(channel.get_frequency_spectrum())
                 freq = channel.get_frequencies()
-                mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
+                mask = (freq != 0.2) & (freq > 0.05)
                 spectrum = spectrum[mask]
                 freq = freq[mask]
 
@@ -310,7 +310,7 @@ class Flight:
                     times = channel.get_times()
                     spectrum = np.abs(channel.get_frequency_spectrum())
                     freq = channel.get_frequencies()
-                    mask = (freq != 0.2) & (freq > 0.05) & (freq < 0.8)
+                    mask = (freq != 0.2) & (freq > 0.05)
                     spectrum = spectrum[mask]
                     freq = freq[mask]
 
