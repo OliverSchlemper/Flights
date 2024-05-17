@@ -65,7 +65,7 @@ class Flight:
         l1_max = 0
         amp_max = 0
         SNR_max = 0
-        #RMS_max = 0
+        RMS_max = 0
         station = event.get_station(station_number)
         for i in range(24):
             channel = station.get_channel(i)
@@ -88,10 +88,10 @@ class Flight:
             #check
             l1_max  = max(l1, l1_max)
             SNR_max = max(SNR, SNR_max)
-            #RMS_max = max(RMS, RMS_max)
+            RMS_max = max(avg_RMS[i], RMS_max)
             amp_max = max(amp, amp_max)
 
-        return l1_max, amp_max, SNR_max#, RMS_max
+        return l1_max, amp_max, SNR_max, RMS_max
 
     #------------------------------------------------------------------------------------------------------
     
@@ -179,7 +179,7 @@ class Flight:
                 else:
                     reader = readRNOGData()
 
-                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz)
+                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
 
                     # calculate avg RMS per force trigger event and then get an average for each station, run, channel
                     force_trigger_events_in_this_file = temp_df.event_number[temp_df.force_triggers == True]
@@ -187,29 +187,30 @@ class Flight:
                     for i in range(len(force_trigger_events_in_this_file)): # only look at force trigger events
                         avg_RMSs[i] = Flight.calculate_avg_RMS(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i]) # row i gets the avg values for all 24 antennas for event i
                     avg_RMS = np.mean(avg_RMSs, axis=0)
-
-                    l1s = np.zeros(len(temp_df.event_number))
-                    amps = np.zeros(len(temp_df.event_number))
-                    SNRs = np.zeros(len(temp_df.event_number))
-                    #RMSs = np.zeros(len(temp_df.event_number))
-                    for i in range(len(temp_df.event_number)):
-                        l1, amp, SNR = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                    
+                    len_event_number = len(temp_df.event_number)
+                    l1s = np.zeros(len_event_number)
+                    amps = np.zeros(len_event_number)
+                    SNRs = np.zeros(len_event_number)
+                    RMSs = np.zeros(len_event_number)
+                    for i in range(len_event_number):
+                        l1, amp, SNR, RMS = Flight.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
                         l1s[i] = l1
                         amps[i] = amp
                         SNRs[i] = SNR
-                        #RMSs[i] = RMS
+                        RMSs[i] = RMS
 
                     temp_df['l1_max'] = l1s
                     temp_df['amp_max'] = amps
                     temp_df['SNR_max'] = SNRs
-                    #temp_df['RMS_max'] = RMSs
-                    l1_threshold = 0.4
-                    SNR_threshold = 10
+                    temp_df['RMS_max'] = RMSs
+                    l1_threshold = 0.3
+                    SNR_threshold = 9
                     temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
                     temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
                     #temp_df['noise'] = np.where(SNRs == None, 1, 0)
 
-                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']], filename = filename[:-5])
+                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']], filename = filename[:-5])
                     Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
             # save header information
@@ -222,7 +223,7 @@ class Flight:
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         header_df['i'] = range(0, len(header_df))
         if filetype == 'combined.root':
-            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'cw', 'impulsive']] # change order to have index in front
+            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']] # change order to have index in front
         else:
             header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
 
@@ -274,7 +275,7 @@ class Flight:
             trigger_type = 'Unknown'
 
         reader = readRNOGData()
-        reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz)
+        reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
 
         evt = reader.get_event(run_nr=run_number, event_id=event_number)
         station = evt.get_station(station_number)
@@ -371,8 +372,11 @@ class Flight:
         n_bins = self.n_bins
 
         #print(pd.to_datetime(self.header_df.trigger_time.min(), unit = 's'), pd.to_datetime(self.header_df.trigger_time.max(), unit = 's'))
-        self.ax[1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
-        self.ax[1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
+        #self.ax[1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
+        #self.ax[1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
+        self.ax[1].hist(self.header_df[self.header_df.cw == True].trigger_time, bins = n_bins, color = 'C2',  label = 'cw', histtype = 'step', linewidth = 2, alpha = 0.5)
+        self.ax[1].hist(self.header_df[self.header_df.impulsive == True].trigger_time, bins = n_bins, color = 'C3',  label = 'impulsive', histtype = 'step', linewidth = 2, alpha = 0.5)
+        self.ax[1].hist(self.header_df[(self.header_df.impulsive == False) & (self.header_df.cw == False)].trigger_time, bins = n_bins, color = 'C4',  label = 'neither', histtype = 'step', linewidth = 2, alpha = 0.5)
 
 
         self.ax_01_twin = self.ax[1].twinx()
@@ -389,5 +393,5 @@ class Flight:
         self.ax[1].set_xticklabels(tick_times, rotation=90)
         self.ax[1].set_xlim(min(ticks), max(ticks))
         self.ax[1].legend()
-        self.ax_01_twin.legend(loc = 1)
+        #self.ax_01_twin.legend(loc = 0)
 
