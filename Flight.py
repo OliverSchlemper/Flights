@@ -22,7 +22,7 @@ class Flight:
     path_to_combined_files = '/home/oliver/software/Flights/combined/'
     #------------------------------------------------------------------------------------------------------
     #------------------------------------------------------------------------------------------------------
-    def __init__(self, flighttracker, i, rebuild_combined_scores=False):
+    def __init__(self, flighttracker, i, rebuild_combined_scores=False, filetype = 'combined.root'):
         from FlightTracker import FlightTracker
         if not i < len(flighttracker.flights_distinct):
             print(f'index {i} out of bounds for flights_distinct with size {len(flighttracker.flights_distinct)}')
@@ -38,7 +38,7 @@ class Flight:
             self.start_time_plot = FlightTracker.utc.localize(datetime.strptime(self.start_time_plot, FlightTracker.fmt))
             self.stop_time_plot = FlightTracker.utc.localize(datetime.strptime(self.stop_time_plot, FlightTracker.fmt))
 
-            self.header_df = Flight.get_what_ever_is_in_those_root_files(self.start_time_plot, self.stop_time_plot, filetype='combined.root', rebuild_combined_scores=rebuild_combined_scores)
+            self.header_df = Flight.get_what_ever_is_in_those_root_files(self.start_time_plot, self.stop_time_plot, filetype=filetype, rebuild_combined_scores=rebuild_combined_scores)
 
             self.flights = flighttracker.flights.query( f"readtime_utc >= '{datetime.strftime(self.start_time_plot, FlightTracker.fmt)}' & "
                                                         f"readtime_utc <= '{datetime.strftime(self.stop_time_plot, FlightTracker.fmt)}' & "
@@ -98,7 +98,7 @@ class Flight:
     def simple_l1(frequencies):
         return np.max(frequencies**2)/np.sum(frequencies**2)
     #------------------------------------------------------------------------------------------------------
-    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'headers.root', rebuild_combined_scores=False):
+    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'combined.root', rebuild_combined_scores=False):
         from FlightTracker import FlightTracker
         
         if filetype == 'headers.root':
@@ -111,10 +111,10 @@ class Flight:
 
         # getting runtable information and downloading header files
         runtable = FlightTracker.rnogcopy(start_time, stop_time, filetype) 
-
         # check if files exits for time
         if len(runtable) == 0:
-            sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
+            return pd.DataFrame()
+            #sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
 
         #prepare filtering on runtable
         runtable['run_string'] = 'run' + runtable.run.astype(str)
@@ -157,8 +157,8 @@ class Flight:
             temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])
             temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])
             temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])
-            temp_df['force_triggers'] = np.array(file['combined/header/trigger_info/trigger_info.force_trigger'])
-            temp_df['ext_triggers'] = np.array(file['combined/header/trigger_info/trigger_info.ext_trigger'])
+            temp_df['force_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.force_trigger'])
+            temp_df['ext_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.ext_trigger'])
             run_nr = np.array(file[path]['header/run_number'])[0]
             # combinded (waveform) information
 
@@ -372,11 +372,11 @@ class Flight:
         n_bins = self.n_bins
 
         #print(pd.to_datetime(self.header_df.trigger_time.min(), unit = 's'), pd.to_datetime(self.header_df.trigger_time.max(), unit = 's'))
-        #self.ax[1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
-        #self.ax[1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
-        self.ax[1].hist(self.header_df[self.header_df.cw == True].trigger_time, bins = n_bins, color = 'C2',  label = 'cw', histtype = 'step', linewidth = 2, alpha = 0.5)
-        self.ax[1].hist(self.header_df[self.header_df.impulsive == True].trigger_time, bins = n_bins, color = 'C3',  label = 'impulsive', histtype = 'step', linewidth = 2, alpha = 0.5)
-        self.ax[1].hist(self.header_df[(self.header_df.impulsive == False) & (self.header_df.cw == False)].trigger_time, bins = n_bins, color = 'C4',  label = 'neither', histtype = 'step', linewidth = 2, alpha = 0.5)
+        self.ax[1].hist(self.header_df[self.header_df.lt_triggers == True].trigger_time, bins = n_bins, color = 'C0',  label = 'lt triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
+        self.ax[1].hist(self.header_df[self.header_df.radiant_triggers == True].trigger_time, bins = n_bins, color = 'C1',  label = 'radiant triggers', histtype = 'step', linewidth = 2, alpha = 0.5)
+        #self.ax[1].hist(self.header_df[self.header_df.cw == True].trigger_time, bins = n_bins, color = 'C2',  label = 'cw', histtype = 'step', linewidth = 2, alpha = 0.5)
+        #self.ax[1].hist(self.header_df[self.header_df.impulsive == True].trigger_time, bins = n_bins, color = 'C3',  label = 'impulsive', histtype = 'step', linewidth = 2, alpha = 0.5)
+        #self.ax[1].hist(self.header_df[(self.header_df.impulsive == False) & (self.header_df.cw == False)].trigger_time, bins = n_bins, color = 'C4',  label = 'neither', histtype = 'step', linewidth = 2, alpha = 0.5)
 
 
         self.ax_01_twin = self.ax[1].twinx()

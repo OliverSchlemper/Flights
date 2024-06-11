@@ -14,6 +14,8 @@ from pandasql import sqldf
 from rnog_data.runtable import RunTable
 from datetime import datetime, timedelta
 
+from IPython.display import clear_output
+
 from Flight import Flight
 
 class FlightTracker:
@@ -83,6 +85,7 @@ class FlightTracker:
         files = [filename for filename in os.listdir(filedir) if '.db' in filename] 
         # Iterate through each database file
         for filename in files:
+            print(f'start {filename}')
             # Establish connection to the database file
             con = sqlite3.connect(filedir + filename)
 
@@ -100,6 +103,8 @@ class FlightTracker:
 
             if(len(df)) != 0:
                 flights = pd.concat([flights, df], ignore_index=True)
+            print(f'end {filename}')
+            clear_output(wait=True)
         
 
         if len(flights) != 0:   
@@ -116,11 +121,23 @@ class FlightTracker:
             flights_distinct = sqldf("SELECT distinct flightnumber, date, filename from flights")
         
             if append_min_max_time == True:
-                flight_start_end_times = sqldf( "SELECT min(readtime_utc) as mintime, max(readtime_utc) as maxtime, round(sqrt(min(r2)), 1) as min_r, date, flightnumber from flights "
-                                                "Group By date, flightnumber, filename")
+                flight_start_end_times = sqldf( ''' SELECT 
+                                                        min(readtime_utc) as mintime, 
+                                                        max(readtime_utc) as maxtime, 
+                                                        round(sqrt(min(r2)), 1) as min_r, 
+                                                        round(min(z), 1) as min_z, date, 
+                                                        flightnumber, 
+                                                        min(x) as min_x, 
+                                                        max(x) as max_x,
+                                                        min(y) as min_y,
+                                                        max(y) as max_y
+                                                    from flights 
+                                                    Group By date, flightnumber, filename''')
                 
                 # Merge  start/end times to distinct flights
                 flights_distinct = flights_distinct.merge(flight_start_end_times, on=['flightnumber', 'date'], how='left')
+                flights_distinct['theta'] = np.round(np.rad2deg(np.arctan2(flights_distinct.max_y - flights_distinct.min_y, flights_distinct.max_x - flights_distinct.min_x)))
+                flights_distinct.drop(columns = ['min_x', 'max_x', 'min_y', 'max_y'], inplace = True)
         
         # Write the updated DataFrame back to the database
         tablename_distinct = tablename + '_distinct'
@@ -172,10 +189,10 @@ class FlightTracker:
     def get_flights_and_flights_distinct(start_time,
                     stop_time,
                     tablename='flights',
-                    db_file='flights'):
+                    destination='flights/flights.dnb'):
         tablename_distinct = tablename + '_distinct'
         
-        con = sqlite3.connect(f'./flights/{db_file}.db')
+        con = sqlite3.connect(f'{destination}')
         test = pd.read_sql_query(f"SELECT count(*) as length from {tablename} ", con)
         if test.length.iloc[0] == 0:
             table = table_distinct = pd.DataFrame() # if there is nothing in db file return empty dataframe(s)
@@ -186,7 +203,7 @@ class FlightTracker:
         return table, table_distinct
 
     #-------------------------------------------------------------------------------------------------------------------
-    def download_and_process_db_files(start_time, stop_time):
+    def download_and_process_db_files(start_time, stop_time, destination):
         # get and unzip files
         current_time = start_time
         file_dates = sorted([s.split('-')[0] for s in os.listdir('./data/')])
@@ -208,11 +225,11 @@ class FlightTracker:
         os.system('cd data && gunzip --force *.gz > /dev/null 2>&1 && cd ..')
 
         # process files to one big db file
-        FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), tablename = 'flights')
+        FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), destination = destination, tablename = 'flights')
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_flight_by_index(self, i):
-        return Flight(self, i)
+    def get_flight_by_index(self, i, filetype='combined.root'):
+        return Flight(self, i, filetype=filetype)
     
     #-------------------------------------------------------------------------------------------------------------------
     def set_flight_index(self, i):
@@ -317,16 +334,20 @@ class FlightTracker:
         return_linspace = []
         for element in x:
             index = np.where(times <= element)[0][-1]
-            if index < (len(times) - 1):
-                y2 = r.iloc[index+1]
-                y1 = r.iloc[index]
-                x2 = times.iloc[index+1]
-                x1 = times.iloc[index]
-                m = (y2 - y1) / (x2 - x1)
-                t = y2 - m * x2
-                return_linspace.append(m*element+t)
-            else:
+            if index >= (len(times) - 1):
+                index = index - 1
                 print(f'Index {index} out of range {len(times) - 1}')
+            y2 = r.iloc[index+1]
+            y1 = r.iloc[index]
+            x2 = times.iloc[index+1]
+            x1 = times.iloc[index]
+            m = (y2 - y1) / (x2 - x1)
+            t = y2 - m * x2
+            return_linspace.append(m*element+t)
+        len_ret = len(return_linspace)
+        len_x = len(x)
+        while(len_ret < len_x):
+            return_linspace.append(0)
 
         return return_linspace
 
@@ -518,7 +539,7 @@ class FlightTracker:
     # time format
     fmt = '%Y-%m-%d %H:%M:%S'
 
-    def __init__(self, start_time, stop_time=None):
+    def __init__(self, start_time, stop_time=None, destination='./flights/flights.db', already_calculated=False):
         #make dirs
         FlightTracker.create_dirs()
 
@@ -530,6 +551,6 @@ class FlightTracker:
 
         # initialize stations dataframe
         self.stations = FlightTracker.init_stations()
-        
-        FlightTracker.download_and_process_db_files(self.start_time, self.stop_time) # downloads flight tracker data and saves a db file with flights / flights_distinct
-        self.flights, self.flights_distinct = FlightTracker.get_flights_and_flights_distinct(self.start_time, self.stop_time) # load flights / flights_distinct from a db file
+        if already_calculated == False:
+            FlightTracker.download_and_process_db_files(self.start_time, self.stop_time, destination) # downloads flight tracker data and saves a db file with flights / flights_distinct
+        self.flights, self.flights_distinct = FlightTracker.get_flights_and_flights_distinct(self.start_time, self.stop_time, destination=destination) # load flights / flights_distinct from a db file
