@@ -3,3 +3,10 @@
 *.pyc
 *.root
 *.pdf
+combined_handcarry/*
+distinct_table_with_header_scores/*
+flights/*
+header_files_for_time_range/*
+trigger_rates_with_d/*
+station11_run1239
+.git_old/
