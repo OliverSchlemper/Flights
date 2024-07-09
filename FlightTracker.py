@@ -10,15 +10,43 @@ import pandas as pd
 import pymap3d as pm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from scipy.signal import hilbert
 from pandasql import sqldf
 from rnog_data.runtable import RunTable
 from datetime import datetime, timedelta
+from NuRadioReco.modules.io.RNO_G.readRNOGDataMattak import readRNOGData
+from NuRadioReco.utilities import units
 
 from IPython.display import clear_output
 
 from Flight import Flight
 
 class FlightTracker:
+
+
+
+    # time zones
+    london = pytz.timezone('Europe/London')
+    utc = pytz.timezone('UTC')
+
+    # time format
+    fmt = '%Y-%m-%d %H:%M:%S'
+
+    def __init__(self, start_time, stop_time=None, destination='./flights/flights.db', already_calculated=False, R2 = 150):
+        #make dirs
+        FlightTracker.create_dirs()
+
+        self.start_time = FlightTracker.utc.localize(datetime.strptime(start_time, FlightTracker.fmt))
+        if stop_time == None:
+            self.stop_time = self.start_time + timedelta(days=1)
+        else:
+            self.stop_time = FlightTracker.utc.localize(datetime.strptime(stop_time, FlightTracker.fmt))
+
+        # initialize stations dataframe
+        self.stations = FlightTracker.init_stations()
+        if already_calculated == False:
+            FlightTracker.download_and_process_db_files(self.start_time, self.stop_time, destination, R2 = R2) # downloads flight tracker data and saves a db file with flights / flights_distinct
+        self.flights, self.flights_distinct = FlightTracker.get_flights_and_flights_distinct(self.start_time, self.stop_time, destination=destination) # load flights / flights_distinct from a db file
 
     # functions
     #-------------------------------------------------------------------------------------------------------------------
@@ -32,20 +60,19 @@ class FlightTracker:
             DataFrame: The updated pandas DataFrame with processed coordinates and radial distance squared.
         """
         # Convert geodetic coordinates to local ENU coordinates
-        dataframe['x'], dataframe['y'], dataframe['z'] = pm.geodetic2enu(dataframe.longitude, dataframe.latitude, dataframe.altitude*0.3048, lon0, lat0, z0) # altitude from foot to meters
+        dataframe['x'], dataframe['y'], dataframe['z'] = pm.geodetic2enu(dataframe.latitude, dataframe.longitude, dataframe.altitude*0.3048, lat0, lon0, z0) # altitude from foot to meters
         
         # convert m to km
         dataframe['x'], dataframe['y'], dataframe['z'] = dataframe['x']/1000, dataframe['y']/1000, dataframe['z']/1000
+
+        dataframe['azimuth'], dataframe['elevation'], dataframe['slant_range'] = pm.geodetic2aer(dataframe.latitude, dataframe.longitude, dataframe.altitude*0.3048, lat0, lon0, z0)
+        dataframe['zenith'] = 90 - dataframe['elevation']
         
         # Calculate radial distance squared
         dataframe['r2'] = dataframe.x**2 + dataframe.y**2 + dataframe.z**2
         
         return dataframe
 
-
-    #-------------------------------------------------------------------------------------------------------------------
-    def append_l1():
-        pass
     #-------------------------------------------------------------------------------------------------------------------
     def init_stations():
         s = [['Big House', -38.45, 72.58, 0]
@@ -79,13 +106,13 @@ class FlightTracker:
         and writes the processed data back to the database.
         """
 
-        flights = flights_distinct = df = pd.DataFrame()
+        flights = flights_distinct = d00f = pd.DataFrame()
 
         # List SQLite database files in the specified directory
         files = [filename for filename in os.listdir(filedir) if '.db' in filename] 
         # Iterate through each database file
         for filename in files:
-            print(f'start {filename}')
+            #print(f'start {filename}')
             # Establish connection to the database file
             con = sqlite3.connect(filedir + filename)
 
@@ -103,23 +130,18 @@ class FlightTracker:
 
             if(len(df)) != 0:
                 flights = pd.concat([flights, df], ignore_index=True)
-            print(f'end {filename}')
+            #print(f'end {filename}')
             clear_output(wait=True)
         
-
         if len(flights) != 0:   
             # TBI
             # Append ENU coordinates to the DataFrame
             flights = FlightTracker.append_enu(flights)
-            
-            flights['readtime_utc']= pd.to_datetime(flights.readtime, format='ISO8601').dt.tz_localize('Europe/London').dt.tz_convert('UTC')
-        
+            flights['readtime_utc']= pd.to_datetime(flights.readtime, format='ISO8601').dt.tz_localize('Europe/London',  ambiguous=True).dt.tz_convert('UTC')
             # Filter data for radial distance less than R2 (60 km)
             flights = flights[flights.r2 < R2**2]
-        
             # Distinct flights
             flights_distinct = sqldf("SELECT distinct flightnumber, date, filename from flights")
-        
             if append_min_max_time == True:
                 flight_start_end_times = sqldf( ''' SELECT 
                                                         min(readtime_utc) as mintime, 
@@ -138,7 +160,6 @@ class FlightTracker:
                 flights_distinct = flights_distinct.merge(flight_start_end_times, on=['flightnumber', 'date'], how='left')
                 flights_distinct['theta'] = np.round(np.rad2deg(np.arctan2(flights_distinct.max_y - flights_distinct.min_y, flights_distinct.max_x - flights_distinct.min_x)))
                 flights_distinct.drop(columns = ['min_x', 'max_x', 'min_y', 'max_y'], inplace = True)
-        
         # Write the updated DataFrame back to the database
         tablename_distinct = tablename + '_distinct'
         con = sqlite3.connect(destination)
@@ -146,7 +167,7 @@ class FlightTracker:
         # Write the DataFrame to the SQLite database
         flights.to_sql(tablename, con, if_exists = 'replace')
         flights_distinct.to_sql(tablename_distinct, con, if_exists = 'replace')
-        
+
         # Close the database connection
         con.close()
                     
@@ -197,13 +218,13 @@ class FlightTracker:
         if test.length.iloc[0] == 0:
             table = table_distinct = pd.DataFrame() # if there is nothing in db file return empty dataframe(s)
         else:  
-            table = pd.read_sql_query(f"Select * From {tablename} where date >= '{datetime.strftime(start_time, '%Y-%m-%d')}' and date < '{datetime.strftime(stop_time, '%Y-%m-%d')}' order by date", con)
-            table_distinct = pd.read_sql_query(f"Select * From {tablename_distinct} where date >= '{datetime.strftime(start_time, '%Y-%m-%d')}' and date < '{datetime.strftime(stop_time, '%Y-%m-%d')}' order by date", con) 
+            table = pd.read_sql_query(f"Select * From {tablename} where readtime_utc >= '{datetime.strftime(start_time, '%Y-%m-%d %H:%M:%S')}' and readtime_utc < '{datetime.strftime(stop_time, '%Y-%m-%d %H:%M:%S')}' order by readtime_utc", con)
+            table_distinct = pd.read_sql_query(f"Select * From {tablename_distinct} where mintime >= '{datetime.strftime(start_time, '%Y-%m-%d %H:%M:%S')}' and maxtime < '{datetime.strftime(stop_time, '%Y-%m-%d %H:%M:%S')}' order by mintime", con) 
         con.close()
         return table, table_distinct
 
     #-------------------------------------------------------------------------------------------------------------------
-    def download_and_process_db_files(start_time, stop_time, destination):
+    def download_and_process_db_files(start_time, stop_time, destination, R2 = 150):
         # get and unzip files
         current_time = start_time
         file_dates = sorted([s.split('-')[0] for s in os.listdir('./data/')])
@@ -225,10 +246,10 @@ class FlightTracker:
         os.system('cd data && gunzip --force *.gz > /dev/null 2>&1 && cd ..')
 
         # process files to one big db file
-        FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), destination = destination, tablename = 'flights')
+        FlightTracker.process_db_files(datetime.strftime(start_time.astimezone(FlightTracker.london), FlightTracker.fmt), datetime.strftime(stop_time.astimezone(FlightTracker.london), FlightTracker.fmt), destination = destination, tablename = 'flights', R2 = R2)
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_flight_by_index(self, i, filetype='combined.root'):
+    def get_flight_by_index(self, i, filetype='headers.root'):
         return Flight(self, i, filetype=filetype)
     
     #-------------------------------------------------------------------------------------------------------------------
@@ -298,21 +319,335 @@ class FlightTracker:
         return header_df
 
     #-------------------------------------------------------------------------------------------------------------------
+    def get_df_from_handcarry_data(start_time, stop_time, rebuild_combined_scores=False):
+        # getting runtable information and downloading header files
+        runtable = FlightTracker.rnogcopy(start_time, stop_time, 'table_only') 
+        # check if files exits for flightnumber and time
+        if len(runtable) == 0:
+            sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
+
+        #prepare filtering on runtable
+        runtable['run_string'] = 'run' + runtable.run.astype(str)
+        runtable['station_string'] = 'station' + runtable.station.astype(str)
+
+        # getting filenames for this flight
+        filepaths = []
+        for i in range(len(runtable)):
+            try:
+                filepaths.append(f'combined_handcarry/{runtable.station_string.iloc[i]}/{runtable.run_string.iloc[i]}')
+            except IndexError:
+                print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
+        # read all headers.root files in one DataFrame
+        header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
+        #print(filepaths)
+        for filepath in filepaths:
+            #print(filepath)
+            path = 'header' # didn't want to change this in the following rows so just kept path a variable
+            file = uproot.open(f'./{filepath}/headers.root')
+            temp_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
+            temp_df['station_number'] = np.array(file[path]['header/station_number'])
+            temp_df['run_number'] = np.array(file[path]['header/run_number'])
+            temp_df['event_number'] = np.array(file[path]['header/event_number'])
+            temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])
+            temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])
+            temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])
+            temp_df['force_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.force_trigger'])
+            temp_df['ext_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.ext_trigger'])
+            run_nr = np.array(file[path]['header/run_number'])[0]
+            
+            path_combined_scores = f'station{temp_df.station_number.iloc[0]}_run{temp_df.run_number.iloc[0]}' # remove '.root' from filename
+            if os.path.exists(f'./combined_scores_handcarry/{path_combined_scores}_scores.db') & (rebuild_combined_scores == False): 
+                # Establish a connection to the SQLite database
+                con = sqlite3.connect(f'./combined_scores_handcarry/{path_combined_scores}_scores.db')
+                
+                # get combined_scores from db file and join on temp_df
+                print(f'./combined_scores_handcarry/{path_combined_scores}_scores.db')
+                temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
+                temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
+                
+                # Close the database connection
+                con.close()
+            else:
+
+                #waveform info
+                reader = readRNOGData()
+
+                print('--------------------------------')
+                print(filepath)
+                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
+                #reader.begin([filepath + 'waveforms.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
+
+                # calculate avg RMS per force trigger event and then get an average for each station, run, channel
+                force_trigger_events_in_this_file = temp_df.event_number[temp_df.force_triggers == True]
+                force_trigger_station_number_in_this_file = temp_df.station_number[temp_df.force_triggers == True]
+                avg_RMSs = np.zeros((len(force_trigger_events_in_this_file), 24)) # 2D array with rows for every event and 24 columns for each channels
+                for i in range(len(force_trigger_events_in_this_file)): # only look at force trigger events
+                    print('i: ', i, 'event_id:', force_trigger_events_in_this_file.iloc[i])
+                    #print(reader.get_event(run_nr=run_nr, event_id=force_trigger_events_in_this_file.iloc[i]))
+
+                    avg_RMSs[i] = Flight.calculate_avg_RMS(reader.get_event_by_index(force_trigger_events_in_this_file.iloc[i]), force_trigger_station_number_in_this_file.iloc[i]) # row i gets the avg values for all 24 antennas for event i
+                avg_RMS = np.mean(avg_RMSs, axis=0)
+                
+                len_event_number = len(temp_df.event_number)
+                l1s = np.zeros(len_event_number)
+                amps = np.zeros(len_event_number)
+                SNRs = np.zeros(len_event_number)
+                RMSs = np.zeros(len_event_number)
+                imps = np.zeros(len_event_number)
+                for i in range(len_event_number):
+                    l1, amp, SNR, RMS, imp = FlightTracker.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                    l1s[i] = l1
+                    amps[i] = amp
+                    SNRs[i] = SNR
+                    RMSs[i] = RMS
+                    imps[i] = imp
+
+                temp_df['l1_max'] = l1s
+                temp_df['amp_max'] = amps
+                temp_df['SNR_max'] = SNRs
+                temp_df['RMS_max'] = RMSs
+                temp_df['imp_max'] = imps
+                l1_threshold = 0.3
+                SNR_threshold = 9
+                temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
+                temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
+                #temp_df['noise'] = np.where(SNRs == None, 1, 0)
+
+                Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'imp_max', 'cw', 'impulsive']], filename = path_combined_scores, path = 'combined_scores_handcarry')
+                Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = 'combined_scores_handcarry') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
+
+            if len(header_df) == 0:
+                header_df = temp_df
+            else:
+                header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
+
+        #print(header_df.trigger_time, datetime.strftime(start_time, fmt))
+        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
+        return header_df
+
+
+    #------------------------------------------------------------------------------------------------------
+    def calculate_avg_RMS(event, station_number):
+        station = event.get_station(station_number)
+        RMSs = np.zeros(24) # save avg for each channel here
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = channel.get_trace()
+            RMSs[i] = np.sqrt(np.mean(trace**2))
+        return RMSs
+
+    #------------------------------------------------------------------------------------------------------
+    def impulsivity(trace, start_index=0, debug=False):
+        ''' impulsivity metric based on the excess in Hilbert-envelope close to the highest amplitude pulse '''
+        abs_hilbert = abs(hilbert(trace))
+        hilbert_maximum_index = np.argmax(abs_hilbert)
+        reordered_index = np.argsort(abs(np.arange(len(trace))-hilbert_maximum_index))
+        reordered_hilbert = abs_hilbert[reordered_index]
+        impulsivity_curve = np.cumsum(reordered_hilbert[start_index:])/np.sum(reordered_hilbert[start_index:])
+        impulsivity = 2*np.mean(impulsivity_curve)-1    
+        if debug:
+            plt.plot(np.arange(len(trace[start_index:])), impulsivity_curve, label=f"impulsivity: {impulsivity:.5f}")
+            plt.fill_between(np.arange(len(trace[start_index:])), np.cumsum(np.ones_like(trace[start_index:])/len(trace[start_index:])), impulsivity_curve, alpha=0.4)
+            plt.xlabel("sample")
+            plt.ylabel("normalized pulse-ordered CDF")
+            plt.legend()
+            plt.xlim(0, len(trace[start_index:]))
+            plt.ylim(0,1)
+            plt.plot([0,len(trace[start_index:])],[0,1], ":", color="black")
+        return max(impulsivity,0)
+
+    #------------------------------------------------------------------------------------------------------
+    def calc_l1_max_and_amp_max_and_SNR_max(event, station_number, avg_RMS):
+        #print(station_number)
+        l1_max = 0
+        amp_max = 0
+        SNR_max = 0
+        RMS_max = 0
+        imp_max = 0
+        station = event.get_station(station_number)
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = np.abs(channel.get_trace())
+            times = channel.get_times()
+            #times_mask = (times < 0)
+
+            freq = channel.get_frequencies()
+            mask = (0.05 < freq) & (freq < 0.8) & (freq != 0.2)
+            freq = freq[mask]
+            spectrum = np.abs(channel.get_frequency_spectrum())[mask]
+
+            #calculate
+            l1 = Flight.simple_l1(spectrum)
+            amp = np.max(trace)
+            impulsivity = FlightTracker.impulsivity(trace)
+            #avg = np.average(trace)
+            #RMS = np.sqrt(np.mean(trace[times_mask]**2))
+            SNR = amp / avg_RMS[i]
+
+            #check
+            l1_max  = max(l1, l1_max)
+            SNR_max = max(SNR, SNR_max)
+            RMS_max = max(avg_RMS[i], RMS_max)
+            amp_max = max(amp, amp_max)
+            imp_max = max(impulsivity, imp_max)
+
+        return l1_max, amp_max, SNR_max, RMS_max, imp_max
+
+    #------------------------------------------------------------------------------------------------------
+    
+    def simple_l1(frequencies):
+        return np.max(frequencies**2)/np.sum(frequencies**2)
+
+    #------------------------------------------------------------------------------------------------------
+    def get_what_ever_is_in_those_root_files(start_time, stop_time, filetype = 'combined.root', rebuild_combined_scores=False):       
+        if filetype == 'headers.root':
+            path = 'header'
+        elif filetype == 'combined.root':
+            path = 'combined'
+        else:
+            path = None
+            print(f'Unknown file type: {filetype}, choose from ["headers.root", "combined.root"]')
+
+        # getting runtable information and downloading header files
+        runtable = FlightTracker.rnogcopy(start_time, stop_time, filetype) 
+        # check if files exits for time
+        if len(runtable) == 0:
+            return pd.DataFrame()
+            #sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
+
+        #prepare filtering on runtable
+        runtable['run_string'] = 'run' + runtable.run.astype(str)
+        runtable['station_string'] = 'station' + runtable.station.astype(str)
+
+        # getting filenames for this flight
+        filenames = []
+        for i in range(len(runtable)):
+            try:
+                filenames.append([filename for filename in os.listdir(f'./{path}/') if re.search(runtable.station_string.iloc[i], filename) and re.search(runtable.run_string.iloc[i], filename)][0])
+            except IndexError:
+                print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
+        
+        header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
+
+        for filename in filenames:
+            #try to be added somewhere here
+            try:
+                file = uproot.open(f"{path}/" + filename)
+            except:
+                return pd.DataFrame()
+            temp_df = pd.DataFrame()
+            
+            '''
+            # make mask to slice all data
+            times = pd.to_datetime(np.array(file[path]['header/trigger_time']), unit = 's')
+            mask = (times >= pd.to_datetime(start_time).tz_convert(None)) & (times <= pd.to_datetime(stop_time).tz_convert(None))
+
+            # header information
+            temp_df['station_number'] = np.array(file[path]['header/station_number'])[mask]
+            temp_df['run_number'] = np.array(file[path]['header/run_number'])[mask]
+            temp_df['event_number'] = np.array(file[path]['header/event_number'])[mask]
+            temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])[mask]
+            temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])[mask]
+            temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])[mask]
+            run_nr = np.array(file[path]['header/run_number'])[0]
+            # combinded (waveform) information
+            '''
+
+#            header information
+            temp_df['station_number'] = np.array(file[path]['header/station_number'])
+            temp_df['run_number'] = np.array(file[path]['header/run_number'])
+            temp_df['event_number'] = np.array(file[path]['header/event_number'])
+            temp_df['trigger_time'] = np.array(file[path]['header/trigger_time'])
+            temp_df['radiant_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.radiant_trigger'])
+            temp_df['lt_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.lt_trigger'])
+            temp_df['force_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.force_trigger'])
+            temp_df['ext_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.ext_trigger'])
+            run_nr = np.array(file[path]['header/run_number'])[0]
+            # combinded (waveform) information
+
+            if filetype == 'combined.root':
+                
+                # if combined scores already exist for that root file (run, station) then join them instead of calculating
+                path_combined_scores = f'./combined_scores/{filename[:-5]}_scores.db' # remove '.root' from filename
+                if os.path.exists(path_combined_scores) & (rebuild_combined_scores == False): 
+                    # Establish a connection to the SQLite database
+                    con = sqlite3.connect(path_combined_scores)
+                    
+                    # get combined_scores from db file and join on temp_df
+                    temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
+                    temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
+                    
+                    # Close the database connection
+                    con.close()
+                else:
+                    reader = readRNOGData()
+
+                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
+
+                    # calculate avg RMS per force trigger event and then get an average for each station, run, channel
+                    force_trigger_events_in_this_file = temp_df.event_number[temp_df.force_triggers == True]
+                    avg_RMSs = np.zeros((len(force_trigger_events_in_this_file), 24)) # 2D array with rows for every event and 24 columns for each channels
+                    for i in range(len(force_trigger_events_in_this_file)): # only look at force trigger events
+                        avg_RMSs[i] = Flight.calculate_avg_RMS(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i]) # row i gets the avg values for all 24 antennas for event i
+                    avg_RMS = np.mean(avg_RMSs, axis=0)
+                    
+                    len_event_number = len(temp_df.event_number)
+                    l1s = np.zeros(len_event_number)
+                    amps = np.zeros(len_event_number)
+                    SNRs = np.zeros(len_event_number)
+                    RMSs = np.zeros(len_event_number)
+                    for i in range(len_event_number):
+                        l1, amp, SNR, RMS, imp = FlightTracker.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event(run_nr=run_nr, event_id=temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                        l1s[i] = l1
+                        amps[i] = amp
+                        SNRs[i] = SNR
+                        RMSs[i] = RMS
+
+                    temp_df['l1_max'] = l1s
+                    temp_df['amp_max'] = amps
+                    temp_df['SNR_max'] = SNRs
+                    temp_df['RMS_max'] = RMSs
+                    l1_threshold = 0.3
+                    SNR_threshold = 9
+                    temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
+                    temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
+                    #temp_df['noise'] = np.where(SNRs == None, 1, 0)
+
+                    Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']], filename = filename[:-5])
+                    Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
+
+            # save header information
+            if len(header_df) == 0:
+                header_df = temp_df
+            else:
+                header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
+
+        # since we are processing whole file again in order to save the scores, we need to filter for desired time interval
+        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)].reset_index()
+        #header_df['i'] = range(0, len(header_df))
+        if filetype == 'combined.root':
+            header_df = header_df[['station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']] # change order to have index in front
+        else:
+            header_df = header_df[['station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
+
+        return header_df
 
     #-------------------------------------------------------------------------------------------------------------------
     def rnogcopy(start_time, stop_time, file='headers.root'):
+        # get runtable
+        rnog_table = RunTable()
+        table = rnog_table.get_table(start_time=datetime.strftime(start_time, '%Y-%m-%dT%H:%M:%S'), stop_time=datetime.strftime(stop_time, '%Y-%m-%dT%H:%M:%S'))
 
         #check for filetype
         if file == 'headers.root':
             path = 'header'
         elif file == 'combined.root':
             path = 'combined'
+        elif file == 'table_only':
+            return table
         else:
             print(f'Unknown filename: {file}')
 
-        # get runtable
-        rnog_table = RunTable()
-        table = rnog_table.get_table(start_time=datetime.strftime(start_time, '%Y-%m-%dT%H:%M:%S'), stop_time=datetime.strftime(stop_time, '%Y-%m-%dT%H:%M:%S'))
 
         # check if files already exist in './header/'
         files_exist = True
@@ -451,16 +786,6 @@ class FlightTracker:
                     #ax[i, j].legend()
                 counter += 1
 
-
-    #-------------------------------------------------------------------------------------------------------------------
-    def show_flights(self):
-        self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']].head(20)
-
-        #print(self.flights_distinct[['flightnumber', 'date', 'filename', 'min_r', 'mintime', 'maxtime']])
-
-    #-------------------------------------------------------------------------------------------------------------------
-
-
     #-------------------------------------------------------------------------------------------------------------------
     def plot_trigger_rate_over_d(self):
 
@@ -525,32 +850,105 @@ class FlightTracker:
         # combined files
         if not os.path.exists('./combined/'):
             os.system('mkdir combined')
+        # combined files handcarry
+        if not os.path.exists('./combined_handcarry/'):
+            os.system('mkdir combined_handcarry')
         # combined scores (l1, max_amplitude, SNR)
         if not os.path.exists('./combined_scores/'):
             os.system('mkdir combined_scores')
+        # combined scores handcarry (l1, max_amplitude, SNR)
+        if not os.path.exists('./combined_scores_handcarry/'):
+            os.system('mkdir combined_scores_handcarry')
     #-------------------------------------------------------------------------------------------------------------------
     #-------------------------------------------------------------------------------------------------------------------
-    
+        #------------------------------------------------------------------------------------------------------
+    def plot_event(self=None, i=None, station_number=None, run_number=None, event_number=None, lt_trigger=None, radiant_trigger=None, force_trigger=None, multichannel=True, channels=None, fk_station_run_event=None, baselinecorrection = 'approximate'):
+        if i != None:
+            station_number = self.header_df.station_number.iloc[i]
+            run_number = self.header_df.run_number.iloc[i]
+            event_number = self.header_df.event_number.iloc[i]
+            lt_trigger = self.header_df.lt_triggers.iloc[i]
+            radiant_trigger = self.header_df.radiant_triggers.iloc[i]
+            force_trigger = self.header_df.force_triggers.iloc[i]
 
-    # time zones
-    london = pytz.timezone('Europe/London')
-    utc = pytz.timezone('UTC')
+        if channels == None:
+            channels = range(24)
+        
+        if fk_station_run_event != None:
+            parts = str(fk_station_run_event).split("_")
 
-    # time format
-    fmt = '%Y-%m-%d %H:%M:%S'
+            # Assign each part to a separate variable
+            station_number = int(parts[0])
+            run_number = int(parts[1])
+            event_number = int(parts[2])
 
-    def __init__(self, start_time, stop_time=None, destination='./flights/flights.db', already_calculated=False):
-        #make dirs
-        FlightTracker.create_dirs()
-
-        self.start_time = FlightTracker.utc.localize(datetime.strptime(start_time, FlightTracker.fmt))
-        if stop_time == None:
-            self.stop_time = self.start_time + timedelta(days=1)
+        if lt_trigger == True:
+            trigger_type = 'lt'
+        elif radiant_trigger == True:
+            trigger_type = 'radiant'
+        elif force_trigger == True:
+            trigger_type = 'force'
         else:
-            self.stop_time = FlightTracker.utc.localize(datetime.strptime(stop_time, FlightTracker.fmt))
+            trigger_type = 'Unknown'
 
-        # initialize stations dataframe
-        self.stations = FlightTracker.init_stations()
-        if already_calculated == False:
-            FlightTracker.download_and_process_db_files(self.start_time, self.stop_time, destination) # downloads flight tracker data and saves a db file with flights / flights_distinct
-        self.flights, self.flights_distinct = FlightTracker.get_flights_and_flights_distinct(self.start_time, self.stop_time, destination=destination) # load flights / flights_distinct from a db file
+        reader = readRNOGData()
+        handcarry_path = f'combined_handcarry/station{station_number}/run{run_number}'
+        print(handcarry_path)
+        reader.begin([handcarry_path], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction=baselinecorrection)
+
+        evt = reader.get_event(run_nr=run_number, event_id=event_number)
+        station = evt.get_station(station_number)
+        
+        if multichannel == True:
+            fig, (ax0, ax1) = plt.subplots(2, figsize = (20, 7.5))
+            fig.subplots_adjust(hspace=0.3)
+            fig.suptitle(f'station: {station_number}, run: {run_number}, event: {event_number}, 24 channels')
+            
+            # setting labels
+            ax0.plot([], [], label = 'trace')
+            ax1.plot([], [], label = 'fourier transform')
+            for i in channels:
+                channel = station.get_channel(i)
+                trace = channel.get_trace()
+                times = channel.get_times()
+                spectrum = np.abs(channel.get_frequency_spectrum())
+                freq = channel.get_frequencies()
+                mask = (0.05 < freq) & (freq < 0.8)
+                spectrum = spectrum[mask]
+                freq = freq[mask]
+
+                alpha = 0.5
+                ax0.plot(times[:], trace[:], '-', alpha = alpha)
+                ax1.plot(freq, spectrum, alpha = alpha)
+
+            ax0.set_xlabel('time [ns]')
+            ax0.set_ylabel('amplitude ~ [mV]')
+            ax0.legend()
+            ax1.set_xlabel('frequency [GHz]')
+            ax1.set_ylabel('amplitude')
+            ax1.legend()
+        else:
+            fig, ax = plt.subplots(8, 6, figsize = (20, 7.5))
+            fig.subplots_adjust(hspace=0.1, wspace=0.1)
+            fig.suptitle(f'station: {station_number}, run: {run_number}, event: {event_number}, 24 channels')
+            channel_number = 0
+            for i in range(4):
+                for j in range(6):
+                    channel = station.get_channel(channel_number)
+                    trace = channel.get_trace()
+                    times = channel.get_times()
+                    spectrum = np.abs(channel.get_frequency_spectrum())
+                    freq = channel.get_frequencies()
+                    #mask = (0.05 < freq) & (freq < 0.8)
+                    mask = (freq < 0.8)
+                    spectrum = spectrum[mask]
+                    freq = freq[mask]
+
+                    alpha = 1
+                    ax[2 * i, j].plot(times, trace, '-', alpha = alpha, label = channel_number)
+                    ax[2 * i + 1, j].plot(freq, spectrum, alpha = alpha)
+
+                    channel_number += 1
+            for axes in ax.reshape(-1):
+                axes.legend()
+            

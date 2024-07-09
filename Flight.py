@@ -131,7 +131,12 @@ class Flight:
         header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
 
         for filename in filenames:
-            file = uproot.open(f"{path}/" + filename)
+            #try to be added somewhere here
+            try:
+                file = uproot.open(f"{path}/" + filename)
+            except:
+                print(f'could not open {path}/{filename}')
+                return pd.DataFrame()
             temp_df = pd.DataFrame()
             
             '''
@@ -220,26 +225,27 @@ class Flight:
                 header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
 
         # since we are processing whole file again in order to save the scores, we need to filter for desired time interval
-        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
-        header_df['i'] = range(0, len(header_df))
+        header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)].reset_index()
+        #header_df['i'] = range(0, len(header_df))
         if filetype == 'combined.root':
-            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']] # change order to have index in front
+            header_df = header_df[['station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']] # change order to have index in front
         else:
-            header_df = header_df[['i', 'station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
+            header_df = header_df[['station_number', 'run_number', 'event_number', 'trigger_time', 'radiant_triggers', 'lt_triggers', 'force_triggers']] # change order to have index in front
 
         return header_df
 
 
 
     #-------------------------------------------------------------------------------------------------------------------
-    def write_combined_scores_to_db(df, filename='test', tablename='combined_scores'):
-        path = f'./combined_scores/{filename}_scores.db'
+    def write_combined_scores_to_db(df, path = 'combined_scores', filename='test', tablename='combined_scores'):
+        path = f'./{path}/{filename}_scores.db'
+        print(path)
 
         # Establish a connection to the SQLite database
         con = sqlite3.connect(path)
         
         # Write the DataFrame to the SQLite database
-        df.to_sql(tablename, con, if_exists='append')
+        df.to_sql(tablename, con, if_exists='replace')
         
         # Close the database connection
         con.close()
