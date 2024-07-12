@@ -124,6 +124,7 @@ class FlightTracker:
             else:
                 # Read data from'aircraft' table into a pandas DataFrame
                 df = pd.read_sql_query(f"SELECT *, date(readtime) as date from aircraft Where readtime >= '{start_time}' And readtime < '{stop_time}'", con)
+                df = df[~((df.longitude.diff() == 0) & (df.latitude.diff() == 0))] #get rid of duplicate rows where gps got stuck but time not
                 df['filename'] = filename
             # Close the database connection
             con.close()
@@ -319,7 +320,7 @@ class FlightTracker:
         return header_df
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_df_from_handcarry_data(start_time, stop_time, rebuild_combined_scores=False):
+    def get_df_from_handcarry_data(start_time, stop_time, rebuild_combined_scores=False, stations = [11, 12, 13, 21, 22, 23, 24]):
         # getting runtable information and downloading header files
         runtable = FlightTracker.rnogcopy(start_time, stop_time, 'table_only') 
         # check if files exits for flightnumber and time
@@ -334,7 +335,11 @@ class FlightTracker:
         filepaths = []
         for i in range(len(runtable)):
             try:
-                filepaths.append(f'combined_handcarry/{runtable.station_string.iloc[i]}/{runtable.run_string.iloc[i]}')
+                if runtable.station.iloc[i] in stations:
+                    #print(f'processing station {runtable.station_string.iloc[i]}')
+                    filepaths.append(f'combined_handcarry/{runtable.station_string.iloc[i]}/{runtable.run_string.iloc[i]}')
+                else:
+                    print(f'Not processing station {runtable.station_string.iloc[i]}, run {runtable.run_string.iloc[i]}')
             except IndexError:
                 print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
         # read all headers.root files in one DataFrame
@@ -374,7 +379,7 @@ class FlightTracker:
 
                 print('--------------------------------')
                 print(filepath)
-                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
+                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
                 #reader.begin([filepath + 'waveforms.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
 
                 # calculate avg RMS per force trigger event and then get an average for each station, run, channel
@@ -382,7 +387,7 @@ class FlightTracker:
                 force_trigger_station_number_in_this_file = temp_df.station_number[temp_df.force_triggers == True]
                 avg_RMSs = np.zeros((len(force_trigger_events_in_this_file), 24)) # 2D array with rows for every event and 24 columns for each channels
                 for i in range(len(force_trigger_events_in_this_file)): # only look at force trigger events
-                    print('i: ', i, 'event_id:', force_trigger_events_in_this_file.iloc[i])
+                    #print('i: ', i, 'event_id:', force_trigger_events_in_this_file.iloc[i])
                     #print(reader.get_event(run_nr=run_nr, event_id=force_trigger_events_in_this_file.iloc[i]))
 
                     avg_RMSs[i] = Flight.calculate_avg_RMS(reader.get_event_by_index(force_trigger_events_in_this_file.iloc[i]), force_trigger_station_number_in_this_file.iloc[i]) # row i gets the avg values for all 24 antennas for event i
@@ -415,6 +420,7 @@ class FlightTracker:
 
                 Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'imp_max', 'cw', 'impulsive']], filename = path_combined_scores, path = 'combined_scores_handcarry')
                 Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = 'combined_scores_handcarry') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
+                print(f'finished with {filepath}')
 
             if len(header_df) == 0:
                 header_df = temp_df
@@ -423,9 +429,14 @@ class FlightTracker:
 
         #print(header_df.trigger_time, datetime.strftime(start_time, fmt))
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
+        
         return header_df
+        
+        #return 0
 
-
+    #------------------------------------------------------------------------------------------------------
+    def get_times(self):
+        print(f'"{self.start_time.strftime("%Y-%m-%dT%H:%M:%S")}" "{self.stop_time.strftime("%Y-%m-%dT%H:%M:%S")}"')
     #------------------------------------------------------------------------------------------------------
     def calculate_avg_RMS(event, station_number):
         station = event.get_station(station_number)
