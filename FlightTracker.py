@@ -220,7 +220,16 @@ class FlightTracker:
             table = table_distinct = pd.DataFrame() # if there is nothing in db file return empty dataframe(s)
         else:  
             table = pd.read_sql_query(f"Select * From {tablename} where readtime_utc >= '{datetime.strftime(start_time, '%Y-%m-%d %H:%M:%S')}' and readtime_utc < '{datetime.strftime(stop_time, '%Y-%m-%d %H:%M:%S')}' order by readtime_utc", con)
-            table_distinct = pd.read_sql_query(f"Select * From {tablename_distinct} where mintime >= '{datetime.strftime(start_time, '%Y-%m-%d %H:%M:%S')}' and maxtime < '{datetime.strftime(stop_time, '%Y-%m-%d %H:%M:%S')}' order by mintime", con) 
+            table_distinct = pd.read_sql_query(
+                f"""Select 
+                        *
+                        , '"' || strftime('%Y-%m-%d %H:%M:%S', mintime) || '", ' ||
+                          '"' || strftime('%Y-%m-%d %H:%M:%S', maxtime) || '"' as t 
+                    From {tablename_distinct} 
+                    where mintime >= '{datetime.strftime(start_time, '%Y-%m-%d %H:%M:%S')}' 
+                    and maxtime < '{datetime.strftime(stop_time, '%Y-%m-%d %H:%M:%S')}' 
+                    order by mintime"""
+                    , con) 
         con.close()
         return table, table_distinct
 
@@ -320,7 +329,7 @@ class FlightTracker:
         return header_df
 
     #-------------------------------------------------------------------------------------------------------------------
-    def get_df_from_handcarry_data(start_time, stop_time, rebuild_combined_scores=False, stations = [11, 12, 13, 21, 22, 23, 24]):
+    def get_df_from_handcarry_data(start_time, stop_time, rebuild_combined_scores=False, stations = [11, 12, 13, 21, 22, 23, 24], channel = 0, path_to_scores = 'combined_scores_handcarry'):
         # getting runtable information and downloading header files
         runtable = FlightTracker.rnogcopy(start_time, stop_time, 'table_only') 
         # check if files exits for flightnumber and time
@@ -361,12 +370,12 @@ class FlightTracker:
             run_nr = np.array(file[path]['header/run_number'])[0]
             
             path_combined_scores = f'station{temp_df.station_number.iloc[0]}_run{temp_df.run_number.iloc[0]}' # remove '.root' from filename
-            if os.path.exists(f'./combined_scores_handcarry/{path_combined_scores}_scores.db') & (rebuild_combined_scores == False): 
+            if os.path.exists(f'./{path_to_scores}/{path_combined_scores}_scores.db') & (rebuild_combined_scores == False): 
                 # Establish a connection to the SQLite database
-                con = sqlite3.connect(f'./combined_scores_handcarry/{path_combined_scores}_scores.db')
+                con = sqlite3.connect(f'./{path_to_scores}/{path_combined_scores}_scores.db')
                 
                 # get combined_scores from db file and join on temp_df
-                print(f'./combined_scores_handcarry/{path_combined_scores}_scores.db')
+                print(f'./{path_to_scores}/{path_combined_scores}_scores.db')
                 temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
                 temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
                 
@@ -379,7 +388,7 @@ class FlightTracker:
 
                 print('--------------------------------')
                 print(filepath)
-                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
+                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
                 #reader.begin([filepath + 'waveforms.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
 
                 # calculate avg RMS per force trigger event and then get an average for each station, run, channel
@@ -394,32 +403,34 @@ class FlightTracker:
                 avg_RMS = np.mean(avg_RMSs, axis=0)
                 
                 len_event_number = len(temp_df.event_number)
-                l1s = np.zeros(len_event_number)
-                amps = np.zeros(len_event_number)
-                SNRs = np.zeros(len_event_number)
-                RMSs = np.zeros(len_event_number)
-                imps = np.zeros(len_event_number)
+                l1s = np.zeros((len_event_number, 24))
+                amps = np.zeros((len_event_number, 24))
+                SNRs = np.zeros((len_event_number, 24))
+                RMSs = np.zeros((len_event_number, 24))
+                imps = np.zeros((len_event_number, 24))
                 for i in range(len_event_number):
-                    l1, amp, SNR, RMS, imp = FlightTracker.calc_l1_max_and_amp_max_and_SNR_max(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                    l1, amp, SNR, RMS, imp = FlightTracker.calc_l1_amp_SNR(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
                     l1s[i] = l1
                     amps[i] = amp
                     SNRs[i] = SNR
                     RMSs[i] = RMS
                     imps[i] = imp
+                
+                temp_df['l1'] = list(l1s)
+                temp_df['amp'] = list(amps)
+                temp_df['SNR'] = list(SNRs)
+                temp_df['imp'] = list(imps)
 
-                temp_df['l1_max'] = l1s
-                temp_df['amp_max'] = amps
-                temp_df['SNR_max'] = SNRs
-                temp_df['RMS_max'] = RMSs
-                temp_df['imp_max'] = imps
-                l1_threshold = 0.3
-                SNR_threshold = 9
-                temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
-                temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
+                #l1_threshold = 0.3
+                #SNR_threshold = 9
+                #temp_df['cw'] = np.where(l1s > l1_threshold, 1, 0)
+                #temp_df['impulsive'] = np.where(((SNRs > SNR_threshold) & (temp_df.cw == False)), 1, 0) #if event is cw it is not impulsive even if SNR is high
                 #temp_df['noise'] = np.where(SNRs == None, 1, 0)
+                #Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']], filename = filename[:-5])
+                #Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
-                Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'imp_max', 'cw', 'impulsive']], filename = path_combined_scores, path = 'combined_scores_handcarry')
-                Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = 'combined_scores_handcarry') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
+                Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1', 'amp', 'SNR', 'imp']], filename = path_combined_scores, path = path_to_scores)
+                Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = path_to_scores) # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
                 print(f'finished with {filepath}')
 
             if len(header_df) == 0:
@@ -427,12 +438,9 @@ class FlightTracker:
             else:
                 header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
 
-        #print(header_df.trigger_time, datetime.strftime(start_time, fmt))
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         
         return header_df
-        
-        #return 0
 
     #------------------------------------------------------------------------------------------------------
     def get_times(self):
@@ -466,6 +474,38 @@ class FlightTracker:
             plt.ylim(0,1)
             plt.plot([0,len(trace[start_index:])],[0,1], ":", color="black")
         return max(impulsivity,0)
+
+
+    #------------------------------------------------------------------------------------------------------
+    def calc_l1_amp_SNR(event, station_number, avg_RMS):
+        #print(station_number)
+        l1s = np.zeros(24) 
+        amps = np.zeros(24) 
+        SNRs = np.zeros(24) 
+        RMSs = np.zeros(24)
+        impulsivities = np.zeros(24)
+
+        station = event.get_station(station_number)
+        for i in range(24):
+            channel = station.get_channel(i)
+            trace = np.abs(channel.get_trace())
+            times = channel.get_times()
+            #times_mask = (times < 0)
+
+            freq = channel.get_frequencies()
+            mask = (0.05 < freq) & (freq < 0.8) & (freq != 0.2)
+            freq = freq[mask]
+            spectrum = np.abs(channel.get_frequency_spectrum())[mask]
+
+            #calculate
+            l1s[i] = Flight.simple_l1(spectrum)
+            amps[i] = np.max(trace)
+            impulsivities[i] = FlightTracker.impulsivity(trace)
+            #avg = np.average(trace)
+            #RMS = np.sqrt(np.mean(trace[times_mask]**2))
+            SNRs[i] = amps[i] / avg_RMS[i]
+
+        return l1s, amps, SNRs, RMSs, impulsivities
 
     #------------------------------------------------------------------------------------------------------
     def calc_l1_max_and_amp_max_and_SNR_max(event, station_number, avg_RMS):
@@ -593,7 +633,7 @@ class FlightTracker:
                 else:
                     reader = readRNOGData()
 
-                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
+                    reader.begin([f'{Flight.path_to_combined_files}{filename}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
 
                     # calculate avg RMS per force trigger event and then get an average for each station, run, channel
                     force_trigger_events_in_this_file = temp_df.event_number[temp_df.force_triggers == True]
