@@ -285,6 +285,8 @@ class Flight:
 
         evt = reader.get_event(run_nr=run_number, event_id=event_number)
         station = evt.get_station(station_number)
+
+        print(evt.get_id(), station.get_id(), evt.get_run_number())
         
         if multichannel == True:
             fig, (ax0, ax1) = plt.subplots(2, figsize = (20, 7.5))
@@ -351,8 +353,8 @@ class Flight:
 
         #------------------------------------------------------------------------------------------------------
         # ax[0]
-        self.ax[0].set_xlabel('longitude [deg]')
-        self.ax[0].set_ylabel('latitude [deg]')
+        self.ax[0].set_xlabel('latitude [deg]')
+        self.ax[0].set_ylabel('longitude [deg]')
         self.ax[0].set_title('trajectory')
 
         #------------------------------------------------------------------------------------------------------
@@ -363,9 +365,9 @@ class Flight:
         #------------------------------------------------------------------------------------------------------
         # stations
         for i in range(len(self.stations)):
-            self.ax[0].scatter(self.stations.longitude[i], self.stations.latitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 15)
+            self.ax[0].scatter(self.stations.latitude[i], self.stations.longitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 15)
 
-        sc = self.ax[0].scatter(self.flights.longitude, self.flights.latitude, marker = '.', c = self.times, cmap = 'viridis', s = 15)
+        sc = self.ax[0].scatter(self.flights.longilatitudetude, self.flights.longitude, marker = '.', c = self.times, cmap = 'viridis', s = 15)
         cbar = self.fig.colorbar(sc, ax=self.ax[0])
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(tick_times)
@@ -401,3 +403,31 @@ class Flight:
         self.ax[1].legend()
         #self.ax_01_twin.legend(loc = 0)
 
+#------------------------------------------------------------------------------------------------------
+    def plot_flight_beautiful(self):
+        from FlightTracker import FlightTracker
+        self.fig, self.ax = plt.subplots()
+        #self.fig.subplots_adjust(hspace=0.3, wspace=0.4)
+
+        #------------------------------------------------------------------------------------------------------
+        # ax[0]
+        self.ax.set_xlabel('latitude [deg]')
+        self.ax.set_ylabel('longitude [deg]')
+        #self.ax.set_title('trajectory')
+
+        #------------------------------------------------------------------------------------------------------
+        # set ticks for time colorbar
+        ticks = np.linspace(self.start_time_plot.timestamp(), self.stop_time_plot.timestamp(), 8)
+        tick_times = pd.to_datetime(ticks, unit = 's').strftime('%H:%M:%S')
+            
+        #------------------------------------------------------------------------------------------------------
+        # stations
+        for i in range(len(self.stations)):
+            self.ax.scatter(self.stations.latitude[i], self.stations.longitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 15)
+
+        sc = self.ax.scatter(self.flights.latitude, self.flights.longitude, marker = '.', c = self.times, cmap = 'viridis', s = 15, label = 'trajectory')
+        cbar = self.fig.colorbar(sc, ax=self.ax)
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels(tick_times)
+
+        self.ax.legend()

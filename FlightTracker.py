@@ -408,18 +408,28 @@ class FlightTracker:
                 SNRs = np.zeros((len_event_number, 24))
                 RMSs = np.zeros((len_event_number, 24))
                 imps = np.zeros((len_event_number, 24))
+                max_freqs = np.zeros((len_event_number, 24))
+                max_spectrums = np.zeros((len_event_number, 24))
                 for i in range(len_event_number):
-                    l1, amp, SNR, RMS, imp = FlightTracker.calc_l1_amp_SNR(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                    l1s[i], amps[i], SNRs[i], RMSs[i], imps[i], max_freqs[i], max_spectrums[i] = FlightTracker.calc_l1_amp_SNR(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
+                    '''
+                    l1, amp, SNR, RMS, imp, max_freq, max_spectrum = FlightTracker.calc_l1_amp_SNR(reader.get_event_by_index(temp_df.event_number.iloc[i]), temp_df.station_number.iloc[i], avg_RMS)
                     l1s[i] = l1
                     amps[i] = amp
                     SNRs[i] = SNR
                     RMSs[i] = RMS
                     imps[i] = imp
+                    max_freqs[i] = max_freq
+                    max_spectrums[i] = max_spectrum
+                    '''
+
                 
                 temp_df['l1'] = list(l1s)
                 temp_df['amp'] = list(amps)
                 temp_df['SNR'] = list(SNRs)
                 temp_df['imp'] = list(imps)
+                temp_df['max_freq'] = list(max_freqs)
+                temp_df['max_spectrum'] = list(max_spectrums)
 
                 #l1_threshold = 0.3
                 #SNR_threshold = 9
@@ -429,7 +439,7 @@ class FlightTracker:
                 #Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1_max', 'amp_max', 'SNR_max', 'RMS_max', 'cw', 'impulsive']], filename = filename[:-5])
                 #Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = filename[:-5], tablename = 'avg_RMS') # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
 
-                Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1', 'amp', 'SNR', 'imp']], filename = path_combined_scores, path = path_to_scores)
+                Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1', 'amp', 'SNR', 'imp', 'max_freq', 'max_spectrum']], filename = path_combined_scores, path = path_to_scores)
                 Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = path_to_scores) # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
                 print(f'finished with {filepath}')
 
@@ -484,11 +494,13 @@ class FlightTracker:
         SNRs = np.zeros(24) 
         RMSs = np.zeros(24)
         impulsivities = np.zeros(24)
+        max_freqs = np.zeros(24)
+        max_spectrums = np.zeros(24)
 
         station = event.get_station(station_number)
         for i in range(24):
             channel = station.get_channel(i)
-            trace = np.abs(channel.get_trace())
+            trace = np.array(channel.get_trace(), dtype = float)
             times = channel.get_times()
             #times_mask = (times < 0)
 
@@ -496,16 +508,22 @@ class FlightTracker:
             mask = (0.05 < freq) & (freq < 0.8) & (freq != 0.2)
             freq = freq[mask]
             spectrum = np.abs(channel.get_frequency_spectrum())[mask]
+            # get the freq with max amplitude
+            max_spectrum = max(spectrum)
+            mask_max_freq = [spectrum == max_spectrum][0]
+
+            max_freqs[i] = freq[mask_max_freq][0]
+            max_spectrums[i] = max_spectrum
 
             #calculate
             l1s[i] = Flight.simple_l1(spectrum)
-            amps[i] = np.max(trace)
+            amps[i] = np.max(np.abs(trace))
             impulsivities[i] = FlightTracker.impulsivity(trace)
             #avg = np.average(trace)
             #RMS = np.sqrt(np.mean(trace[times_mask]**2))
             SNRs[i] = amps[i] / avg_RMS[i]
 
-        return l1s, amps, SNRs, RMSs, impulsivities
+        return l1s, amps, SNRs, RMSs, impulsivities, max_freqs, max_spectrums
 
     #------------------------------------------------------------------------------------------------------
     def calc_l1_max_and_amp_max_and_SNR_max(event, station_number, avg_RMS):
@@ -751,8 +769,8 @@ class FlightTracker:
         #------------------------------------------------------------------------------------------------------
         #-----------------------------------------------------------------------filedir-------------------------------
         # ax[0]
-        self.ax[0, 0].set_xlabel('longitude [deg]')
-        self.ax[0, 0].set_ylabel('latitude [deg]')
+        self.ax[0, 0].set_xlabel('latitude [deg]')
+        self.ax[0, 0].set_ylabel('longitude [deg]')
         self.ax[0, 0].set_title('trajectory')
         #ax[0, 0].set_xlim(-39, -38)
         #ax[0, 0].set_ylim(72.5, 72.7)
@@ -766,9 +784,9 @@ class FlightTracker:
         #------------------------------------------------------------------------------------------------------
         # stations
         for i in range(len(self.stations)):
-            self.ax[0, 0].scatter(self.stations.longitude[i], self.stations.latitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 1)
+            self.ax[0, 0].scatter(self.stations.latitude[i], self.stations.longitude[i], marker = 'x', label = self.stations['Station Name'][i], s = 1)
 
-        sc = self.ax[0, 0].scatter(self.f.longitude, self.f.latitude, marker = '.', c = self.times, cmap = 'viridis', s = 1)
+        sc = self.ax[0, 0].scatter(self.f.latitude, self.f.longitude, marker = '.', c = self.times, cmap = 'viridis', s = 1)
         cbar = self.fig.colorbar(sc, ax=self.ax[0, 0])
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(tick_times)
