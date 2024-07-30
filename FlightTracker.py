@@ -334,7 +334,9 @@ class FlightTracker:
         runtable = FlightTracker.rnogcopy(start_time, stop_time, 'table_only') 
         # check if files exits for flightnumber and time
         if len(runtable) == 0:
-            sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
+            print(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
+            return pd.DataFrame()
+            #sys.exit(f'No runs from "{str(start_time)}" to "{str(stop_time)}"')
 
         #prepare filtering on runtable
         runtable['run_string'] = 'run' + runtable.run.astype(str)
