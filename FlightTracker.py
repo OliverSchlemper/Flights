@@ -343,23 +343,26 @@ class FlightTracker:
         runtable['station_string'] = 'station' + runtable.station.astype(str)
 
         # getting filenames for this flight
-        filepaths = []
+        filepaths = pd.DataFrame(columns = ['filepath', 'station', 'run'])
         for i in range(len(runtable)):
             try:
                 if runtable.station.iloc[i] in stations:
                     #print(f'processing station {runtable.station_string.iloc[i]}')
-                    filepaths.append(f'combined_handcarry/{runtable.station_string.iloc[i]}/{runtable.run_string.iloc[i]}')
+                    filepath_tmp = f'combined_handcarry/{runtable.station_string.iloc[i]}/{runtable.run_string.iloc[i]}'
+                    station_tmp = f'{runtable.station_string.iloc[i]}'
+                    run_tmp = f'{runtable.run_string.iloc[i]}'
+
+                    filepaths_tmp = pd.DataFrame([[filepath_tmp, station_tmp, run_tmp]], columns = ['filepath', 'station', 'run'])
+                    filepaths = pd.concat([filepaths, filepaths_tmp], ignore_index=True, sort=False)
                 else:
                     print(f'Not processing station {runtable.station_string.iloc[i]}, run {runtable.run_string.iloc[i]}')
             except IndexError:
                 print(f'No file with run {runtable.run.iloc[i]} and station {runtable.station.iloc[i]}')
         # read all headers.root files in one DataFrame
         header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
-        #print(filepaths)
-        for filepath in filepaths:
-            #print(filepath)
+        for i in range(len(filepaths)):
             path = 'header' # didn't want to change this in the following rows so just kept path a variable
-            file = uproot.open(f'./{filepath}/headers.root')
+            file = uproot.open(f'./header/{runtable.station_string.iloc[0]}_{runtable.run_string.iloc[0]}_headers.root')
             temp_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
             temp_df['station_number'] = np.array(file[path]['header/station_number'])
             temp_df['run_number'] = np.array(file[path]['header/run_number'])
@@ -371,13 +374,17 @@ class FlightTracker:
             temp_df['ext_triggers'] = np.array(file[path]['header/trigger_info/trigger_info.ext_trigger'])
             run_nr = np.array(file[path]['header/run_number'])[0]
             
-            path_combined_scores = f'station{temp_df.station_number.iloc[0]}_run{temp_df.run_number.iloc[0]}' # remove '.root' from filename
+            path_combined_scores = f'{filepaths.station.iloc[i]}_{filepaths.run.iloc[i]}' # remove '.root' from filename
+            if (path_combined_scores == 'station21_run1069') or (path_combined_scores == 'station21_run93'):
+                print(f'this is {path_combined_scores} so we are not going to fucking uproot this file with mattak')
+                continue
             if os.path.exists(f'./{path_to_scores}/{path_combined_scores}_scores.db') & (rebuild_combined_scores == False): 
                 # Establish a connection to the SQLite database
                 con = sqlite3.connect(f'./{path_to_scores}/{path_combined_scores}_scores.db')
                 
                 # get combined_scores from db file and join on temp_df
                 print(f'./{path_to_scores}/{path_combined_scores}_scores.db')
+
                 temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
                 temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
                 
@@ -389,8 +396,8 @@ class FlightTracker:
                 reader = readRNOGData()
 
                 print('--------------------------------')
-                print(filepath)
-                reader.begin([f'/home/oliver/software/Flights/{filepath}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
+                print(filepaths.filepath.iloc[i])
+                reader.begin([f'/home/oliver/software/Flights/{filepaths.filepath.iloc[i]}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
                 #reader.begin([filepath + 'waveforms.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='approximate')
 
                 # calculate avg RMS per force trigger event and then get an average for each station, run, channel
@@ -443,7 +450,7 @@ class FlightTracker:
 
                 Flight.write_combined_scores_to_db(df = temp_df[['station_number', 'run_number', 'event_number', 'l1', 'amp', 'SNR', 'imp', 'max_freq', 'max_spectrum']], filename = path_combined_scores, path = path_to_scores)
                 Flight.write_combined_scores_to_db(df = pd.DataFrame(avg_RMS), filename = path_combined_scores, tablename = 'avg_RMS', path = path_to_scores) # kind of don't need this, as we only need the avg_RMS values to calculate the scores that we already have anyways in this case
-                print(f'finished with {filepath}')
+                #print(f'finished with {filepaths.filepath.iloc[i]}')
 
             if len(header_df) == 0:
                 header_df = temp_df
