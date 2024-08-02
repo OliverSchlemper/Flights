@@ -362,7 +362,7 @@ class FlightTracker:
         header_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
         for i in range(len(filepaths)):
             path = 'header' # didn't want to change this in the following rows so just kept path a variable
-            file = uproot.open(f'./header/{runtable.station_string.iloc[0]}_{runtable.run_string.iloc[0]}_headers.root')
+            file = uproot.open(f'./header/{filepaths.station.iloc[i]}_{filepaths.run.iloc[i]}_headers.root')
             temp_df = pd.DataFrame(columns = ['trigger_time', 'station_number', 'radiant_triggers'])
             temp_df['station_number'] = np.array(file[path]['header/station_number'])
             temp_df['run_number'] = np.array(file[path]['header/run_number'])
@@ -375,7 +375,7 @@ class FlightTracker:
             run_nr = np.array(file[path]['header/run_number'])[0]
             
             path_combined_scores = f'{filepaths.station.iloc[i]}_{filepaths.run.iloc[i]}' # remove '.root' from filename
-            if (path_combined_scores == 'station21_run1069') or (path_combined_scores == 'station21_run93'):
+            if (path_combined_scores == 'station21_run1069') or (path_combined_scores == 'station13_run1') or (path_combined_scores == 'station21_run93'):
                 print(f'this is {path_combined_scores} so we are not going to fucking uproot this file with mattak')
                 continue
             if os.path.exists(f'./{path_to_scores}/{path_combined_scores}_scores.db') & (rebuild_combined_scores == False): 
@@ -386,8 +386,9 @@ class FlightTracker:
                 print(f'./{path_to_scores}/{path_combined_scores}_scores.db')
 
                 temp_scores = pd.read_sql_query("SELECT * FROM combined_scores", con)
+
                 temp_df = temp_df.merge(temp_scores, on=['station_number', 'run_number', 'event_number'], how='left')
-                
+
                 # Close the database connection
                 con.close()
             else:
@@ -433,12 +434,20 @@ class FlightTracker:
                     '''
 
                 
+                
                 temp_df['l1'] = list(l1s)
                 temp_df['amp'] = list(amps)
                 temp_df['SNR'] = list(SNRs)
                 temp_df['imp'] = list(imps)
                 temp_df['max_freq'] = list(max_freqs)
                 temp_df['max_spectrum'] = list(max_spectrums)
+
+                temp_df['l1'] = temp_df['l1'].apply(lambda x: json.dumps(x.tolist()))
+                temp_df['amp'] = temp_df['amp'].apply(lambda x: json.dumps(x.tolist()))
+                temp_df['SNR'] = temp_df['SNR'].apply(lambda x: json.dumps(x.tolist()))
+                temp_df['imp'] = temp_df['imp'].apply(lambda x: json.dumps(x.tolist()))
+                temp_df['max_freq'] = temp_df['max_freq'].apply(lambda x: json.dumps(x.tolist()))
+                temp_df['max_spectrum'] = temp_df['max_spectrum'].apply(lambda x: json.dumps(x.tolist()))
 
                 #l1_threshold = 0.3
                 #SNR_threshold = 9
@@ -456,7 +465,6 @@ class FlightTracker:
                 header_df = temp_df
             else:
                 header_df = pd.concat([header_df, temp_df], ignore_index=True, sort=False)
-
         header_df = header_df[(header_df.trigger_time >= start_time.timestamp()) & (stop_time.timestamp() >= header_df.trigger_time)]
         
         return header_df
@@ -820,7 +828,7 @@ class FlightTracker:
         #ax_01_twin.plot(times, f.altitude/1000, 'x', color = 'C5')
         self.ax_01_twin.plot(self.times, self.f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
         #ax_01_twin.plot(times, np.sqrt(f.x**2 + f.y**2 + f.z**2), 'x', color = 'C7')
-
+SCORES
         self.ax[0, 1].set_title('Sum all stations')
         self.ax[0, 1].set_xticks(ticks)
         self.ax[0, 1].set_xticklabels(tick_times, rotation=90)
@@ -964,7 +972,7 @@ class FlightTracker:
             trigger_type = 'lt'
         elif radiant_trigger == True:
             trigger_type = 'radiant'
-        elif force_trigger == True:
+        elif force_trigger == True:SCORES
             trigger_type = 'force'
         else:
             trigger_type = 'Unknown'

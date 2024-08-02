@@ -24,7 +24,7 @@ from IPython.display import clear_output
 from Flight import Flight
 
 HANDCARRY_DATA = 'combined_handcarry'
-SCORES = 'scores_from_cluster'
+SCORES = 'combined_scores_cluster/scores_from_cluster'
 
 #------------------------------------------------------------------------------------------------------
 def calculate_avg_RMS(event, station_number):
@@ -102,6 +102,8 @@ def calc_l1_amp_SNR(event, station_number, avg_RMS):
 #------------------------------------------------------------------------------------------------------
 def write_combined_scores_to_db(df, filename, tablename):
     path = f'./{SCORES}/{filename}_scores.db'
+    full_path = os.system('pwd')
+    print(f'Storing to {full_path} {path}')
 
     # Establish a connection to the SQLite database
     con = sqlite3.connect(path)
