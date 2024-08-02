@@ -828,7 +828,7 @@ class FlightTracker:
         #ax_01_twin.plot(times, f.altitude/1000, 'x', color = 'C5')
         self.ax_01_twin.plot(self.times, self.f.z, '.', markersize = 1, label = 'altitude [km]', color = 'C6')
         #ax_01_twin.plot(times, np.sqrt(f.x**2 + f.y**2 + f.z**2), 'x', color = 'C7')
-SCORES
+
         self.ax[0, 1].set_title('Sum all stations')
         self.ax[0, 1].set_xticks(ticks)
         self.ax[0, 1].set_xticklabels(tick_times, rotation=90)
@@ -972,7 +972,7 @@ SCORES
             trigger_type = 'lt'
         elif radiant_trigger == True:
             trigger_type = 'radiant'
-        elif force_trigger == True:SCORES
+        elif force_trigger == True:
             trigger_type = 'force'
         else:
             trigger_type = 'Unknown'
