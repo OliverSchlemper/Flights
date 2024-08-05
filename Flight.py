@@ -281,7 +281,8 @@ class Flight:
             trigger_type = 'Unknown'
 
         reader = readRNOGData()
-        reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
+        #reader.begin([f'{Flight.path_to_combined_files}station{station_number}_run{run_number}_combined.root'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
+        reader.begin([f'combined_handcarry/station{station_number}/run{run_number}'], overwrite_sampling_rate=3200*units.MHz, apply_baseline_correction='fit')
 
         evt = reader.get_event(run_nr=run_number, event_id=event_number)
         station = evt.get_station(station_number)

@@ -5,6 +5,7 @@ import re
 import uproot
 import IPython
 import sys
+import json
 import numpy as np
 import pandas as pd
 import pymap3d as pm
